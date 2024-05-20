@@ -38,12 +38,14 @@ fn proxy_client() -> &'static ReverseProxy<Connector> {
       .https_or_http()
       .enable_http1()
       .build();
-    ReverseProxy::new(
-      hyper_util::client::legacy::Builder::new(TokioExecutor::new())
-        .pool_idle_timeout(Duration::from_secs(3))
+    let mut client = hyper_util::client::legacy::Builder::new(TokioExecutor::new());
+    if let Ok(v) = env::var("IDLE_TIMEOUT") {
+      let idle_timeout = v.parse::<u64>().expect("error parsing IDLE_TIMEOUT");
+      client
         .pool_timer(TokioTimer::new())
-        .build::<_, Incoming>(connector),
-    )
+        .pool_idle_timeout(Duration::from_secs(idle_timeout));
+    }
+    ReverseProxy::new(client.build::<_, Incoming>(connector))
   })
 }
 
