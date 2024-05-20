@@ -9,7 +9,7 @@ use http_body_util::{BodyExt, Empty};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Request, Response, StatusCode};
+use hyper::{Method, Request, Response, StatusCode};
 use hyper_reverse_proxy::ReverseProxy;
 use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -26,6 +26,11 @@ type ResponseBody = UnsyncBoxBody<Bytes, io::Error>;
 fn upstream_url() -> &'static str {
   static UPSTREAM_URL: OnceLock<String> = OnceLock::new();
   UPSTREAM_URL.get_or_init(|| env::var("UPSTREAM_URL").expect("UPSTREAM_URL is not configured"))
+}
+
+fn http_redirect_to() -> &'static Option<String> {
+  static HTTP_REDIRECT_TO: OnceLock<Option<String>> = OnceLock::new();
+  HTTP_REDIRECT_TO.get_or_init(|| env::var("HTTP_REDIRECT_TO").ok())
 }
 
 fn proxy_client() -> &'static ReverseProxy<Connector> {
@@ -55,7 +60,41 @@ fn proxy_client() -> &'static ReverseProxy<Connector> {
 async fn handle(
   req: Request<Incoming>,
   client_ip: IpAddr,
+  https: bool,
 ) -> Result<Response<ResponseBody>, Infallible> {
+  if let (false, Some(http_redirect_to)) = (https, http_redirect_to()) {
+    if req.method() != Method::GET {
+      return Ok(
+        Response::builder()
+          .status(StatusCode::METHOD_NOT_ALLOWED)
+          .body(UnsyncBoxBody::new(
+            Empty::<Bytes>::new().map_err(io::Error::other),
+          ))
+          .unwrap(),
+      );
+    }
+    let host = req.headers().get("host").and_then(|v| v.to_str().ok());
+    if host.is_none() {
+      return Ok(
+        Response::builder()
+          .status(StatusCode::INTERNAL_SERVER_ERROR)
+          .body(UnsyncBoxBody::new(
+            Empty::<Bytes>::new().map_err(io::Error::other),
+          ))
+          .unwrap(),
+      );
+    }
+    return Ok(
+      Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header("Location", format!("{}{}", http_redirect_to, req.uri()))
+        .body(UnsyncBoxBody::new(
+          Empty::<Bytes>::new().map_err(io::Error::other),
+        ))
+        .unwrap(),
+    );
+  }
+
   match proxy_client().call(client_ip, &upstream_url(), req).await {
     Ok(response) => Ok(response),
     Err(err) => {
@@ -86,7 +125,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   upstream_url(); // ensure UPSTREAM_URL is set
   proxy_client(); // ensure the proxy client can be built successfully
 
-  if env::var("CERTIFICATE_PATH").is_ok() && env::var("CERTIFICATE_KEY_PATH").is_ok() {
+  let use_https = env::var("CERTIFICATE_PATH").is_ok() && env::var("CERTIFICATE_KEY_PATH").is_ok();
+  if use_https {
     let bind_addr = format!("{}:{}", host, https_port);
     let addr = bind_addr
       .parse::<SocketAddr>()
@@ -111,7 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
           };
           let io = TokioIo::new(tls_stream);
           if let Err(err) = auto::Builder::new(TokioExecutor::new())
-            .serve_connection(io, service_fn(move |req| handle(req, client_ip)))
+            .serve_connection(io, service_fn(move |req| handle(req, client_ip, true)))
             .await
           {
             eprintln!("Error serving connection: {:?}", err);
@@ -135,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     tokio::task::spawn(async move {
       if let Err(err) = http1::Builder::new()
-        .serve_connection(io, service_fn(move |req| handle(req, client_ip)))
+        .serve_connection(io, service_fn(move |req| handle(req, client_ip, false)))
         .await
       {
         eprintln!("Error serving connection: {:?}", err);
