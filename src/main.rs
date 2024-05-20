@@ -14,8 +14,11 @@ use hyper_reverse_proxy::ReverseProxy;
 use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use hyper_util::server::conn::auto;
 use rustls::ClientConfig;
 use tokio::net::TcpListener;
+
+pub mod utils;
 
 type Connector = HttpsConnector<HttpConnector>;
 type ResponseBody = UnsyncBoxBody<Bytes, io::Error>;
@@ -76,15 +79,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     .unwrap_or("3000".to_string())
     .parse::<u16>()
     .expect("error parsing PORT");
+  let https_port = env::var("HTTPS_PORT")
+    .unwrap_or("3001".to_string())
+    .parse::<u16>()
+    .expect("error parsing HTTPS_PORT");
   upstream_url(); // ensure UPSTREAM_URL is set
   proxy_client(); // ensure the proxy client can be built successfully
+
+  if env::var("CERTIFICATE_PATH").is_ok() && env::var("CERTIFICATE_KEY_PATH").is_ok() {
+    let bind_addr = format!("{}:{}", host, https_port);
+    let addr = bind_addr
+      .parse::<SocketAddr>()
+      .expect("error parsing bind address");
+
+    let listener = TcpListener::bind(addr).await?;
+    println!("Starting HTTPS reverse proxy on port {}", https_port);
+
+    tokio::task::spawn(async move {
+      loop {
+        let tls_acceptor = utils::get_tls_acceptor().expect("error constructing the TLS acceptor");
+        let (stream, remote_addr) = listener.accept().await.expect("error accepting connection");
+        let client_ip = remote_addr.ip();
+
+        tokio::task::spawn(async move {
+          let tls_stream = match tls_acceptor.accept(stream).await {
+            Ok(tls_stream) => tls_stream,
+            Err(err) => {
+              eprintln!("TLS handshake error: {:?}", err);
+              return;
+            }
+          };
+          let io = TokioIo::new(tls_stream);
+          if let Err(err) = auto::Builder::new(TokioExecutor::new())
+            .serve_connection(io, service_fn(move |req| handle(req, client_ip)))
+            .await
+          {
+            eprintln!("Error serving connection: {:?}", err);
+          }
+        });
+      }
+    });
+  }
 
   let bind_addr = format!("{}:{}", host, port);
   let addr = bind_addr
     .parse::<SocketAddr>()
     .expect("error parsing bind address");
   let listener = TcpListener::bind(addr).await?;
-  println!("Starting reverse proxy on port {}", port);
+  println!("Starting HTTP reverse proxy on port {}", port);
 
   loop {
     let (stream, remote_addr) = listener.accept().await?;

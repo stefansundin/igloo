@@ -453,7 +453,9 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "rustls",
+ "rustls-pemfile",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
