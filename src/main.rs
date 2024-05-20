@@ -7,6 +7,7 @@ use std::{env, io};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Empty};
 use hyper::body::{Bytes, Incoming};
+use hyper::header::{HeaderName, HeaderValue};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -31,6 +32,20 @@ fn upstream_url() -> &'static str {
 fn http_redirect_to() -> &'static Option<String> {
   static HTTP_REDIRECT_TO: OnceLock<Option<String>> = OnceLock::new();
   HTTP_REDIRECT_TO.get_or_init(|| env::var("HTTP_REDIRECT_TO").ok())
+}
+
+fn strict_transport_security() -> &'static HeaderName {
+  static STRICT_TRANSPORT_SECURITY: OnceLock<HeaderName> = OnceLock::new();
+  STRICT_TRANSPORT_SECURITY.get_or_init(|| HeaderName::from_static("strict-transport-security"))
+}
+
+fn hsts() -> &'static Option<HeaderValue> {
+  static HSTS: OnceLock<Option<HeaderValue>> = OnceLock::new();
+  HSTS.get_or_init(|| {
+    env::var("HSTS")
+      .ok()
+      .map(|value| HeaderValue::from_static(value.leak()))
+  })
 }
 
 fn proxy_client() -> &'static ReverseProxy<Connector> {
@@ -96,7 +111,14 @@ async fn handle(
   }
 
   match proxy_client().call(client_ip, &upstream_url(), req).await {
-    Ok(response) => Ok(response),
+    Ok(mut response) => {
+      if let Some(value) = hsts() {
+        response
+          .headers_mut()
+          .insert(strict_transport_security(), value.clone());
+      }
+      Ok(response)
+    }
     Err(err) => {
       eprintln!("Error proxying request: {:?}", err);
       Ok(
