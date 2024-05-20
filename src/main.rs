@@ -1,3 +1,101 @@
-fn main() {
-  println!("Hello, world!");
+use std::convert::Infallible;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::OnceLock;
+use std::time::Duration;
+use std::{env, io};
+
+use http_body_util::combinators::UnsyncBoxBody;
+use http_body_util::{BodyExt, Empty};
+use hyper::body::{Bytes, Incoming};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response, StatusCode};
+use hyper_reverse_proxy::ReverseProxy;
+use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use rustls::ClientConfig;
+use tokio::net::TcpListener;
+
+type Connector = HttpsConnector<HttpConnector>;
+type ResponseBody = UnsyncBoxBody<Bytes, io::Error>;
+
+fn upstream_url() -> &'static str {
+  static UPSTREAM_URL: OnceLock<String> = OnceLock::new();
+  UPSTREAM_URL.get_or_init(|| env::var("UPSTREAM_URL").expect("UPSTREAM_URL is not configured"))
+}
+
+fn proxy_client() -> &'static ReverseProxy<Connector> {
+  static PROXY_CLIENT: OnceLock<ReverseProxy<Connector>> = OnceLock::new();
+  PROXY_CLIENT.get_or_init(|| {
+    let connector: Connector = Connector::builder()
+      .with_tls_config(
+        ClientConfig::builder()
+          .with_native_roots()
+          .expect("with_native_roots")
+          .with_no_client_auth(),
+      )
+      .https_or_http()
+      .enable_http1()
+      .build();
+    ReverseProxy::new(
+      hyper_util::client::legacy::Builder::new(TokioExecutor::new())
+        .pool_idle_timeout(Duration::from_secs(3))
+        .pool_timer(TokioTimer::new())
+        .build::<_, Incoming>(connector),
+    )
+  })
+}
+
+async fn handle(
+  req: Request<Incoming>,
+  client_ip: IpAddr,
+) -> Result<Response<ResponseBody>, Infallible> {
+  match proxy_client().call(client_ip, &upstream_url(), req).await {
+    Ok(response) => Ok(response),
+    Err(err) => {
+      eprintln!("Error proxying request: {:?}", err);
+      Ok(
+        Response::builder()
+          .status(StatusCode::INTERNAL_SERVER_ERROR)
+          .body(UnsyncBoxBody::new(
+            Empty::<Bytes>::new().map_err(io::Error::other),
+          ))
+          .unwrap(),
+      )
+    }
+  }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+  let host = env::var("HOST").unwrap_or("0.0.0.0".to_string());
+  let port = env::var("PORT")
+    .unwrap_or("3000".to_string())
+    .parse::<u16>()
+    .expect("error parsing PORT");
+  upstream_url(); // ensure UPSTREAM_URL is set
+  proxy_client(); // ensure the proxy client can be built successfully
+
+  let bind_addr = format!("{}:{}", host, port);
+  let addr = bind_addr
+    .parse::<SocketAddr>()
+    .expect("error parsing bind address");
+  let listener = TcpListener::bind(addr).await?;
+  println!("Starting reverse proxy on port {}", port);
+
+  loop {
+    let (stream, remote_addr) = listener.accept().await?;
+    let client_ip = remote_addr.ip();
+    let io = TokioIo::new(stream);
+
+    tokio::task::spawn(async move {
+      if let Err(err) = http1::Builder::new()
+        .serve_connection(io, service_fn(move |req| handle(req, client_ip)))
+        .await
+      {
+        eprintln!("Error serving connection: {:?}", err);
+      }
+    });
+  }
 }
