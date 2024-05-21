@@ -147,7 +147,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   upstream_url(); // ensure UPSTREAM_URL is set
   proxy_client(); // ensure the proxy client can be built successfully
 
-  let use_https = env::var("CERTIFICATE_PATH").is_ok() && env::var("CERTIFICATE_KEY_PATH").is_ok();
+  let use_https = env::var("CERTIFICATE_URL").is_ok()
+    || (env::var("CERTIFICATE_PATH").is_ok() && env::var("CERTIFICATE_KEY_PATH").is_ok());
   if use_https {
     let bind_addr = format!("{}:{}", host, https_port);
     let addr = bind_addr
@@ -157,7 +158,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     println!("Starting HTTPS reverse proxy on port {}", https_port);
 
-    let tls_acceptor = utils::get_tls_acceptor().expect("error constructing the TLS acceptor");
+    let tls_acceptor = utils::get_tls_acceptor()
+      .await
+      .expect("error constructing the TLS acceptor");
 
     tokio::task::spawn(async move {
       loop {
