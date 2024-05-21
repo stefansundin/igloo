@@ -157,14 +157,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     println!("Starting HTTPS reverse proxy on port {}", https_port);
 
+    let tls_acceptor = utils::get_tls_acceptor().expect("error constructing the TLS acceptor");
+
     tokio::task::spawn(async move {
       loop {
-        let tls_acceptor = utils::get_tls_acceptor().expect("error constructing the TLS acceptor");
         let (stream, remote_addr) = listener.accept().await.expect("error accepting connection");
         let client_ip = remote_addr.ip();
+        let tls_accept = tls_acceptor.accept(stream);
 
         tokio::task::spawn(async move {
-          let tls_stream = match tls_acceptor.accept(stream).await {
+          let tls_stream = match tls_accept.await {
             Ok(tls_stream) => tls_stream,
             Err(err) => {
               eprintln!("TLS handshake error: {:?}", err);
@@ -172,6 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
           };
           let io = TokioIo::new(tls_stream);
+
           if let Err(err) = auto::Builder::new(TokioExecutor::new())
             .serve_connection(io, service_fn(move |req| handle(req, client_ip, true)))
             .await
