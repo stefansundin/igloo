@@ -29,6 +29,11 @@ fn upstream_url() -> &'static str {
   UPSTREAM_URL.get_or_init(|| env::var("UPSTREAM_URL").expect("UPSTREAM_URL is not configured"))
 }
 
+fn allowed_host() -> &'static Option<String> {
+  static ALLOWED_HOST: OnceLock<Option<String>> = OnceLock::new();
+  ALLOWED_HOST.get_or_init(|| env::var("ALLOWED_HOST").ok())
+}
+
 fn http_redirect_to() -> &'static Option<String> {
   static HTTP_REDIRECT_TO: OnceLock<Option<String>> = OnceLock::new();
   HTTP_REDIRECT_TO.get_or_init(|| env::var("HTTP_REDIRECT_TO").ok())
@@ -78,6 +83,19 @@ async fn handle(
   https: bool,
 ) -> Result<Response<ResponseBody>, Infallible> {
   if let (false, Some(http_redirect_to)) = (https, http_redirect_to()) {
+    let host = req.headers().get("host").and_then(|v| v.to_str().ok());
+    if let Some(allowed_host) = allowed_host() {
+      if host.is_none() || host.is_some_and(|host| host != allowed_host) {
+        return Ok(
+          Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(UnsyncBoxBody::new(
+              Empty::<Bytes>::new().map_err(io::Error::other),
+            ))
+            .unwrap(),
+        );
+      }
+    }
     if req.method() != Method::GET {
       return Ok(
         Response::builder()
@@ -88,7 +106,6 @@ async fn handle(
           .unwrap(),
       );
     }
-    let host = req.headers().get("host").and_then(|v| v.to_str().ok());
     if host.is_none() {
       return Ok(
         Response::builder()
