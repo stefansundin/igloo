@@ -29,9 +29,16 @@ fn upstream_url() -> &'static str {
   UPSTREAM_URL.get_or_init(|| env::var("UPSTREAM_URL").expect("UPSTREAM_URL is not configured"))
 }
 
-fn allowed_host() -> &'static Option<String> {
-  static ALLOWED_HOST: OnceLock<Option<String>> = OnceLock::new();
-  ALLOWED_HOST.get_or_init(|| env::var("ALLOWED_HOST").ok())
+fn allowed_hosts() -> &'static Vec<&'static str> {
+  static ALLOWED_HOSTS: OnceLock<Vec<&str>> = OnceLock::new();
+  ALLOWED_HOSTS.get_or_init(|| {
+    env::var("ALLOWED_HOSTS")
+      .unwrap_or("".to_string())
+      .leak()
+      .split(",")
+      .into_iter()
+      .collect()
+  })
 }
 
 fn http_redirect_to() -> &'static Option<String> {
@@ -83,18 +90,30 @@ async fn handle(
   https: bool,
 ) -> Result<Response<ResponseBody>, Infallible> {
   if let (false, Some(http_redirect_to)) = (https, http_redirect_to()) {
-    let host = req.headers().get("host").and_then(|v| v.to_str().ok());
-    if let Some(allowed_host) = allowed_host() {
-      if host.is_none() || host.is_some_and(|host| host != allowed_host) {
-        return Ok(
-          Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(UnsyncBoxBody::new(
-              Empty::<Bytes>::new().map_err(io::Error::other),
-            ))
-            .unwrap(),
-        );
-      }
+    let host = req.headers().get("host").and_then(|v| {
+      v.to_str()
+        .map(|v| {
+          let port_sep = v.find(':');
+          if port_sep.is_some() {
+            v.split_at(port_sep.unwrap()).0
+          } else {
+            v
+          }
+        })
+        .ok()
+    });
+    let allowed_hosts = allowed_hosts();
+    if !allowed_hosts.is_empty()
+      && (host.is_none() || host.is_some_and(|host| !allowed_hosts.contains(&host)))
+    {
+      return Ok(
+        Response::builder()
+          .status(StatusCode::NOT_FOUND)
+          .body(UnsyncBoxBody::new(
+            Empty::<Bytes>::new().map_err(io::Error::other),
+          ))
+          .unwrap(),
+      );
     }
     if req.method() != Method::GET {
       return Ok(
