@@ -8,6 +8,8 @@ use std::{
   sync::Arc,
 };
 use tokio_rustls::TlsAcceptor;
+use x509_parser::prelude::FromDer;
+use x509_parser::{certificate::X509Certificate, extensions::GeneralName};
 use zip::ZipArchive;
 
 fn extract_cert_and_key<R: Read + Seek>(
@@ -78,6 +80,23 @@ pub async fn get_tls_acceptor() -> Result<TlsAcceptor> {
     let mut reader = BufReader::new(keyfile);
     key = rustls_pemfile::private_key(&mut reader).map(|key| key.unwrap())?;
   }
+
+  let cert = X509Certificate::from_der(certs.first().unwrap()).unwrap();
+  let names = cert
+    .1
+    .subject_alternative_name()
+    .unwrap()
+    .unwrap()
+    .value
+    .general_names
+    .iter()
+    .map(|name| match name {
+      GeneralName::DNSName(s) => s.to_string(),
+      other => other.to_string(),
+    })
+    .collect::<Vec<String>>();
+  eprintln!("Loading certificate for DNS names: {}", names.join(", "));
+  eprintln!("Expires at: {}", cert.1.validity.not_after);
 
   let mut server_config = ServerConfig::builder()
     .with_no_client_auth()
