@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 use std::{env, io};
 
@@ -18,11 +18,26 @@ use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use rustls::ClientConfig;
 use tokio::net::TcpListener;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::OnceCell;
+use tokio_rustls::TlsAcceptor;
 
 pub mod utils;
 
 type Connector = HttpsConnector<HttpConnector>;
 type ResponseBody = UnsyncBoxBody<Bytes, io::Error>;
+
+async fn tls_acceptor_lock() -> &'static RwLock<TlsAcceptor> {
+  static TLS_ACCEPTOR_LOCK: OnceCell<RwLock<TlsAcceptor>> = OnceCell::const_new();
+  TLS_ACCEPTOR_LOCK
+    .get_or_init(|| async {
+      let tls_acceptor = utils::get_tls_acceptor()
+        .await
+        .expect("error constructing the TLS acceptor");
+      RwLock::new(tls_acceptor)
+    })
+    .await
+}
 
 fn upstream_url() -> &'static str {
   static UPSTREAM_URL: OnceLock<String> = OnceLock::new();
@@ -194,15 +209,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     println!("Starting HTTPS reverse proxy on port {}", https_port);
 
-    let tls_acceptor = utils::get_tls_acceptor()
-      .await
-      .expect("error constructing the TLS acceptor");
+    // Eagerly load the certificate
+    tls_acceptor_lock().await;
+
+    // Send the process a SIGHUP to reload the certificate
+    tokio::spawn(async {
+      let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
+      while let Some(_) = sighup.recv().await {
+        match utils::get_tls_acceptor().await {
+          Ok(new_tls_acceptor) => {
+            let mut tls_acceptor = tls_acceptor_lock()
+              .await
+              .write()
+              .expect("error getting write-access to TlsAcceptor");
+            *tls_acceptor = new_tls_acceptor;
+          }
+          Err(err) => eprintln!("Error loading certificate: {}", err),
+        }
+      }
+    });
 
     tokio::task::spawn(async move {
       loop {
         let (stream, remote_addr) = listener.accept().await.expect("error accepting connection");
         let client_ip = remote_addr.ip();
-        let tls_accept = tls_acceptor.accept(stream);
+        let tls_accept = tls_acceptor_lock().await.read().unwrap().accept(stream);
 
         tokio::task::spawn(async move {
           let tls_stream = match tls_accept.await {
