@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
-use std::{env, io};
+use std::{env, io, process};
 
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Empty};
@@ -186,6 +186,14 @@ async fn handle(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   env_logger::init();
+
+  // Send the process a SIGINT to terminate the program
+  tokio::spawn(async {
+    let mut sigint = signal(SignalKind::interrupt()).expect("error listening for SIGINT");
+    while let Some(_) = sigint.recv().await {
+      process::exit(0);
+    }
+  });
 
   let host = env::var("HOST").unwrap_or("0.0.0.0".to_string());
   let http_port = env::var("HTTP_PORT")
