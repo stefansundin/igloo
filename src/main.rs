@@ -50,11 +50,8 @@ fn allowed_hosts() -> &'static Vec<&'static str> {
   static ALLOWED_HOSTS: OnceLock<Vec<&str>> = OnceLock::new();
   ALLOWED_HOSTS.get_or_init(|| {
     env::var("ALLOWED_HOSTS")
-      .unwrap_or("".to_string())
-      .leak()
-      .split(",")
-      .into_iter()
-      .collect()
+      .map(|v| v.leak().split(",").into_iter().collect())
+      .unwrap_or(vec![])
   })
 }
 
