@@ -188,10 +188,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   env_logger::init();
 
   let host = env::var("HOST").unwrap_or("0.0.0.0".to_string());
-  let port = env::var("PORT")
+  let http_port = env::var("HTTP_PORT")
     .unwrap_or("3000".to_string())
     .parse::<u16>()
-    .expect("error parsing PORT");
+    .expect("error parsing HTTP_PORT");
   let https_port = env::var("HTTPS_PORT")
     .unwrap_or("3001".to_string())
     .parse::<u16>()
@@ -258,12 +258,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
   }
 
-  let bind_addr = format!("{}:{}", host, port);
+  let bind_addr = format!("{}:{}", host, http_port);
   let addr = bind_addr
     .parse::<SocketAddr>()
     .expect("error parsing bind address");
   let listener = TcpListener::bind(addr).await?;
-  println!("Starting HTTP reverse proxy on port {}", port);
+  println!("Starting HTTP reverse proxy on port {}", http_port);
 
   loop {
     let (stream, remote_addr) = listener.accept().await?;
