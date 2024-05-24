@@ -9,6 +9,7 @@ use std::{
   fs,
   io::{self, BufReader, Cursor, Read, Seek},
   sync::{Arc, OnceLock, RwLock},
+  time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_rustls::TlsAcceptor;
 use x509_parser::prelude::FromDer;
@@ -162,7 +163,20 @@ pub async fn get_tls_acceptor() -> Result<Option<TlsAcceptor>, Box<dyn Error + S
     })
     .collect::<Vec<String>>();
   eprintln!("Loading certificate for DNS names: {}", names.join(", "));
-  eprintln!("Expires at: {}", cert.1.validity.not_after);
+
+  let not_after = cert.1.validity.not_after.timestamp() as u64;
+  let now = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap()
+    .as_secs();
+  eprintln!(
+    "Expires at: {} ({})",
+    cert.1.validity.not_after,
+    not_after
+      .checked_sub(now)
+      .map(|seconds| format!("in {}", humanize_duration(seconds)))
+      .unwrap_or("EXPIRED".to_string())
+  );
 
   let mut server_config = ServerConfig::builder()
     .with_no_client_auth()
@@ -176,4 +190,33 @@ pub async fn get_tls_acceptor() -> Result<Option<TlsAcceptor>, Box<dyn Error + S
   }
 
   return Ok(Some(TlsAcceptor::from(Arc::new(server_config))));
+}
+
+pub fn humanize_duration(seconds: u64) -> String {
+  if seconds == 1 {
+    return "1 second".to_string();
+  } else if seconds < 60 {
+    return format!("{} seconds", seconds);
+  }
+
+  let minutes = seconds / 60;
+  if minutes == 1 {
+    return "1 minute".to_string();
+  } else if minutes < 60 {
+    return format!("{} minutes", minutes);
+  }
+
+  let hours = minutes / 60;
+  if hours == 1 {
+    return "1 hour".to_string();
+  } else if hours < 24 {
+    return format!("{} hours", hours);
+  } else if hours == 25 {
+    return "1 day 1 hour".to_string();
+  } else if hours < 48 {
+    return format!("1 day {} hours", hours - 24);
+  }
+
+  let days = hours / 24;
+  return format!("{} days", days);
 }
