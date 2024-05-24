@@ -22,6 +22,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::OnceCell;
 use tokio_rustls::TlsAcceptor;
 
+pub mod s3_url;
 pub mod utils;
 
 type Connector = HttpsConnector<HttpConnector>;
@@ -33,7 +34,8 @@ async fn tls_acceptor_lock() -> &'static RwLock<TlsAcceptor> {
     .get_or_init(|| async {
       let tls_acceptor = utils::get_tls_acceptor()
         .await
-        .expect("error constructing the TLS acceptor");
+        .expect("Error constructing the TLS acceptor")
+        .expect("Invalid response code received when retrieving certificate bundle");
       RwLock::new(tls_acceptor)
     })
     .await
@@ -186,6 +188,8 @@ async fn handle(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+  env_logger::init();
+
   let host = env::var("HOST").unwrap_or("0.0.0.0".to_string());
   let port = env::var("PORT")
     .unwrap_or("3000".to_string())
@@ -217,14 +221,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
       let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
       while let Some(_) = sighup.recv().await {
         match utils::get_tls_acceptor().await {
-          Ok(new_tls_acceptor) => {
+          Ok(Some(new_tls_acceptor)) => {
             let mut tls_acceptor = tls_acceptor_lock()
               .await
               .write()
               .expect("error getting write-access to TlsAcceptor");
             *tls_acceptor = new_tls_acceptor;
           }
-          Err(err) => eprintln!("Error loading certificate: {}", err),
+          Ok(None) => eprintln!("Certificate is already up to date"),
+          Err(err) => eprintln!("Error updating certificate: {}", err),
         }
       }
     });

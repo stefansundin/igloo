@@ -15,6 +15,8 @@ use x509_parser::prelude::FromDer;
 use x509_parser::{certificate::X509Certificate, extensions::GeneralName};
 use zip::ZipArchive;
 
+use crate::s3_url;
+
 fn etag() -> &'static RwLock<Option<String>> {
   static ETAG: OnceLock<RwLock<Option<String>>> = OnceLock::new();
   ETAG.get_or_init(|| RwLock::new(None))
@@ -56,41 +58,80 @@ fn extract_cert_and_key<R: Read + Seek>(
   return Ok((certs.unwrap(), key.unwrap()));
 }
 
-pub async fn get_tls_acceptor() -> Result<TlsAcceptor, Box<dyn Error + Send + Sync>> {
+pub async fn get_tls_acceptor() -> Result<Option<TlsAcceptor>, Box<dyn Error + Send + Sync>> {
   let certs: Vec<CertificateDer<'_>>;
-  let key: PrivateKeyDer<'_>;
+  let cert_key: PrivateKeyDer<'_>;
 
   if let Ok(certificate_url) = env::var("CERTIFICATE_URL") {
     println!("Downloading certificate bundle from {}", certificate_url);
-    let client = reqwest::Client::new();
-    let mut request = client.get(certificate_url);
 
-    {
-      let etag_option = etag().read().unwrap();
-      if etag_option.is_some() {
-        let etag_value = etag_option.as_ref().unwrap().clone();
+    let etag_option = etag().read().unwrap().to_owned();
+    let new_etag: Option<String>;
+    let zip_cursor: Cursor<hyper::body::Bytes>;
+
+    if certificate_url.starts_with("s3://") {
+      let (bucket, key) = s3_url::parse(certificate_url.as_str())?;
+
+      let region_provider =
+        aws_config::meta::region::RegionProviderChain::default_provider().or_else("us-east-1");
+      let shared_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(region_provider)
+        .load()
+        .await;
+      let s3_client = aws_sdk_s3::client::Client::new(&shared_config);
+      let object_result = s3_client
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .set_if_none_match(etag_option)
+        .send()
+        .await;
+
+      if let Err(err) = object_result {
+        if let aws_sdk_s3::error::SdkError::ServiceError(ref svc_err) = err {
+          let response = svc_err.raw();
+          if response.status().as_u16() == 304 {
+            return Ok(None);
+          }
+        }
+        return Err(Box::new(err));
+      }
+
+      let object = object_result?;
+      let object_body = object.body.collect().await.map(|data| data.into_bytes())?;
+      zip_cursor = Cursor::new(object_body);
+      new_etag = object.e_tag;
+    } else {
+      let client = reqwest::Client::new();
+      let mut request = client.get(certificate_url);
+
+      if let Some(etag_value) = etag_option {
         request = request.header("If-None-Match", etag_value);
       }
+
+      let response = request.send().await?;
+      if response.status() == StatusCode::NOT_MODIFIED {
+        return Ok(None);
+      } else if response.status() != StatusCode::OK {
+        return Err(format!("Status code received: {}", response.status()).into());
+      }
+      let response_etag = response
+        .headers()
+        .get("ETag")
+        .and_then(|v| v.to_str().ok().and_then(|v| Some(v.to_string())));
+
+      let response_body = response.bytes().await?;
+      zip_cursor = Cursor::new(response_body);
+      new_etag = response_etag;
     }
 
-    let response = request.send().await?;
-    if response.status() != StatusCode::OK {
-      return Err(format!("Status code received: {}", response.status()).into());
-    }
-    let response_etag = response
-      .headers()
-      .get("ETag")
-      .and_then(|v| v.to_str().ok().and_then(|v| Some(v.to_string())));
-
-    let response_body = response.bytes().await?;
-    let cursor = Cursor::new(response_body);
-    let data = extract_cert_and_key(cursor)?;
+    let data = extract_cert_and_key(zip_cursor)?;
     certs = data.0;
-    key = data.1;
+    cert_key = data.1;
 
-    if response_etag.is_some() {
+    if new_etag.is_some() {
       let mut etag_option = etag().write().unwrap();
-      *etag_option = response_etag;
+      *etag_option = new_etag;
     }
   } else {
     let certificate_path = env::var("CERTIFICATE_PATH")?;
@@ -102,7 +143,7 @@ pub async fn get_tls_acceptor() -> Result<TlsAcceptor, Box<dyn Error + Send + Sy
 
     let keyfile = fs::File::open(certificate_key_path)?;
     let mut reader = BufReader::new(keyfile);
-    key = rustls_pemfile::private_key(&mut reader).map(|key| key.unwrap())?;
+    cert_key = rustls_pemfile::private_key(&mut reader).map(|key| key.unwrap())?;
   }
 
   let cert = X509Certificate::from_der(certs.first().unwrap())?;
@@ -123,7 +164,7 @@ pub async fn get_tls_acceptor() -> Result<TlsAcceptor, Box<dyn Error + Send + Sy
 
   let mut server_config = ServerConfig::builder()
     .with_no_client_auth()
-    .with_single_cert(certs, key)?;
+    .with_single_cert(certs, cert_key)?;
 
   server_config.alpn_protocols = vec![b"http/1.1".to_vec(), b"http/1.0".to_vec()];
 
@@ -132,5 +173,5 @@ pub async fn get_tls_acceptor() -> Result<TlsAcceptor, Box<dyn Error + Send + Sy
     server_config.alpn_protocols.insert(0, b"h2".to_vec());
   }
 
-  return Ok(TlsAcceptor::from(Arc::new(server_config)));
+  return Ok(Some(TlsAcceptor::from(Arc::new(server_config))));
 }
