@@ -32,7 +32,9 @@ fn extract_cert_and_key<R: Read + Seek>(
   for i in 0..archive.len() {
     let mut file = archive.by_index(i)?;
     let name = file.name().to_string();
-    if name.starts_with("__MACOSX/") || !name.ends_with(".pem") {
+    if name.starts_with("__MACOSX/")
+      || (!name.ends_with(".pem") && !name.ends_with(".crt") && !name.ends_with(".key"))
+    {
       continue;
     }
 
@@ -40,9 +42,9 @@ fn extract_cert_and_key<R: Read + Seek>(
     file.read_to_end(&mut file_data)?;
     let mut file_reader = BufReader::new(file_data.as_slice());
 
-    if name.starts_with("privkey") {
+    if name.starts_with("privkey") || name.ends_with(".key") {
       key = Some(rustls_pemfile::private_key(&mut file_reader).map(|key| key.unwrap())?);
-    } else if name.starts_with("fullchain") {
+    } else if name.starts_with("fullchain") || name.ends_with(".crt") {
       certs =
         Some(rustls_pemfile::certs(&mut file_reader).collect::<io::Result<Vec<CertificateDer>>>()?);
     }
@@ -52,7 +54,7 @@ fn extract_cert_and_key<R: Read + Seek>(
   }
 
   if certs.is_none() || key.is_none() {
-    return Err("fullchain.pem or privkey.pem not found in zip file".into());
+    return Err("certificate or key not found in zip file".into());
   }
 
   return Ok((certs.unwrap(), key.unwrap()));
