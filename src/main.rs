@@ -1,3 +1,5 @@
+#![allow(clippy::needless_return)]
+
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{OnceLock, RwLock};
@@ -50,8 +52,8 @@ fn allowed_hosts() -> &'static Vec<&'static str> {
   static ALLOWED_HOSTS: OnceLock<Vec<&str>> = OnceLock::new();
   ALLOWED_HOSTS.get_or_init(|| {
     env::var("ALLOWED_HOSTS")
-      .map(|v| v.leak().split(",").into_iter().collect())
-      .unwrap_or(vec![])
+      .map(|v| v.leak().split(',').collect())
+      .unwrap_or_default()
   })
 }
 
@@ -108,8 +110,8 @@ async fn handle(
       v.to_str()
         .map(|v| {
           let port_sep = v.find(':');
-          if port_sep.is_some() {
-            v.split_at(port_sep.unwrap()).0
+          if let Some(idx) = port_sep {
+            v.split_at(idx).0
           } else {
             v
           }
@@ -160,7 +162,7 @@ async fn handle(
     );
   }
 
-  match proxy_client().call(client_ip, &upstream_url(), req).await {
+  match proxy_client().call(client_ip, upstream_url(), req).await {
     Ok(mut response) => {
       if let Some(value) = hsts() {
         response
@@ -190,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   // Send the process a SIGINT to terminate the program
   tokio::spawn(async {
     let mut sigint = signal(SignalKind::interrupt()).expect("error listening for SIGINT");
-    while let Some(_) = sigint.recv().await {
+    if sigint.recv().await.is_some() {
       process::exit(0);
     }
   });
@@ -224,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Send the process a SIGHUP to reload the certificate
     tokio::spawn(async {
       let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
-      while let Some(_) = sighup.recv().await {
+      while sighup.recv().await.is_some() {
         match utils::get_tls_acceptor().await {
           Ok(Some(new_tls_acceptor)) => {
             let mut tls_acceptor = tls_acceptor_lock()

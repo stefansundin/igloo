@@ -121,7 +121,7 @@ pub async fn get_tls_acceptor() -> Result<Option<TlsAcceptor>, Box<dyn Error + S
       let response_etag = response
         .headers()
         .get("ETag")
-        .and_then(|v| v.to_str().ok().and_then(|v| Some(v.to_string())));
+        .and_then(|v| v.to_str().ok().map(|v| v.to_string()));
 
       let response_body = response.bytes().await?;
       zip_cursor = Cursor::new(response_body);
