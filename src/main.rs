@@ -9,7 +9,7 @@ use std::{env, io, process};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Empty};
 use hyper::body::{Bytes, Incoming};
-use hyper::header::{HeaderName, HeaderValue};
+use hyper::header::{HeaderName, HeaderValue, HOST};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -103,7 +103,7 @@ fn proxy_client() -> &'static ReverseProxy<Connector> {
 }
 
 async fn handle(
-  req: Request<Incoming>,
+  mut req: Request<Incoming>,
   client_ip: IpAddr,
   https: bool,
 ) -> Result<Response<ResponseBody>, Infallible> {
@@ -162,6 +162,12 @@ async fn handle(
         ))
         .unwrap(),
     );
+  }
+
+  if let Ok(rewrite_host) = env::var("REWRITE_HOST") {
+    if let Ok(val) = HeaderValue::from_str(&rewrite_host) {
+      req.headers_mut().insert(HOST, val);
+    }
   }
 
   match proxy_client().call(client_ip, upstream_url(), req).await {
