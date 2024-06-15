@@ -88,6 +88,7 @@ fn proxy_client() -> &'static ReverseProxy<Connector> {
       .with_tls_config(tls_config)
       .https_or_http()
       .enable_http1()
+      .enable_http2()
       .build();
     let mut client_builder = hyper_util::client::legacy::Builder::new(TokioExecutor::new());
     if let Ok(v) = env::var("IDLE_TIMEOUT") {
