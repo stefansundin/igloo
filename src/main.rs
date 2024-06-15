@@ -2,7 +2,7 @@
 
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 use std::{env, io, process};
 
@@ -18,7 +18,7 @@ use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
-use rustls::ClientConfig;
+use rustls::{ClientConfig, KeyLogFile};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::OnceCell;
@@ -79,24 +79,25 @@ fn hsts() -> &'static Option<HeaderValue> {
 fn proxy_client() -> &'static ReverseProxy<Connector> {
   static PROXY_CLIENT: OnceLock<ReverseProxy<Connector>> = OnceLock::new();
   PROXY_CLIENT.get_or_init(|| {
-    let connector: Connector = Connector::builder()
-      .with_tls_config(
-        ClientConfig::builder()
-          .with_native_roots()
-          .expect("with_native_roots")
-          .with_no_client_auth(),
-      )
+    let mut tls_config = ClientConfig::builder()
+      .with_native_roots()
+      .expect("with_native_roots")
+      .with_no_client_auth();
+    tls_config.key_log = Arc::new(KeyLogFile::new());
+    let connector = Connector::builder()
+      .with_tls_config(tls_config)
       .https_or_http()
       .enable_http1()
       .build();
-    let mut client = hyper_util::client::legacy::Builder::new(TokioExecutor::new());
+    let mut client_builder = hyper_util::client::legacy::Builder::new(TokioExecutor::new());
     if let Ok(v) = env::var("IDLE_TIMEOUT") {
       let idle_timeout = v.parse::<u64>().expect("error parsing IDLE_TIMEOUT");
-      client
+      client_builder
         .pool_timer(TokioTimer::new())
         .pool_idle_timeout(Duration::from_secs(idle_timeout));
     }
-    ReverseProxy::new(client.build::<_, Incoming>(connector))
+    let client = client_builder.build::<_, Incoming>(connector);
+    ReverseProxy::new(client)
   })
 }
 
