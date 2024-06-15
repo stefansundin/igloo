@@ -118,7 +118,11 @@ pub async fn get_tls_data() -> Result<Option<TlsData>, Box<dyn Error + Send + Sy
         .region(region_provider)
         .load()
         .await;
-      let s3_client = aws_sdk_s3::client::Client::new(&shared_config);
+      let mut s3_config = aws_sdk_s3::config::Builder::from(&shared_config);
+      if let Ok(s3_endpoint) = std::env::var("AWS_S3_ENDPOINT") {
+        s3_config = s3_config.endpoint_url(s3_endpoint).force_path_style(true);
+      }
+      let s3_client = aws_sdk_s3::client::Client::from_conf(s3_config.build());
       let object_result = s3_client
         .get_object()
         .bucket(bucket)
