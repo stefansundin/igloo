@@ -18,6 +18,7 @@ use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
+use log::{error, info, warn};
 use rustls::{ClientConfig, KeyLogFile};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
@@ -166,7 +167,7 @@ async fn handle(
       Ok(response)
     }
     Err(err) => {
-      eprintln!("Error proxying request: {:?}", err);
+      error!("Error proxying request: {:?}", err);
       Ok(
         Response::builder()
           .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -181,7 +182,7 @@ async fn handle(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-  env_logger::init();
+  env_logger::init_from_env(env_logger::Env::default().default_filter_or("igloo=info"));
 
   // Send the process a SIGINT to terminate the program
   tokio::spawn(async {
@@ -212,7 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
       .expect("error parsing bind address");
 
     let listener = TcpListener::bind(addr).await?;
-    println!("Starting HTTPS reverse proxy on port {}", https_port);
+    info!("Starting HTTPS reverse proxy on port {}", https_port);
 
     // Eagerly load the certificate
     utils::tls_data_lock().await;
@@ -237,9 +238,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
           let seconds_until_expiration = not_after.saturating_sub(now);
 
           if seconds_until_expiration == 0 {
-            eprintln!("WARNING: The certificate has expired!!");
+            warn!("WARNING: The certificate has expired!!");
           } else if seconds_until_expiration < 24 * 60 * 60 {
-            eprintln!("WARNING: The certificate expires soon!!");
+            warn!("WARNING: The certificate expires soon!!");
           }
 
           // Check progressively more often the closer the expiration date gets, starting 7 days before the expiration date
@@ -303,7 +304,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
           let tls_stream = match tls_accept.await {
             Ok(tls_stream) => tls_stream,
             Err(err) => {
-              eprintln!("TLS handshake error: {:?}", err);
+              error!("TLS handshake error: {:?}", err);
               return;
             }
           };
@@ -313,7 +314,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .serve_connection(io, service_fn(move |req| handle(req, client_ip, true)))
             .await
           {
-            eprintln!("Error serving connection: {:?}", err);
+            error!("Error serving connection: {:?}", err);
           }
         });
       }
@@ -325,7 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     .parse::<SocketAddr>()
     .expect("error parsing bind address");
   let listener = TcpListener::bind(addr).await?;
-  println!("Starting HTTP reverse proxy on port {}", http_port);
+  info!("Starting HTTP reverse proxy on port {}", http_port);
 
   loop {
     let (stream, remote_addr) = listener.accept().await?;
@@ -337,7 +338,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .serve_connection(io, service_fn(move |req| handle(req, client_ip, false)))
         .await
       {
-        eprintln!("Error serving connection: {:?}", err);
+        error!("Error serving connection: {:?}", err);
       }
     });
   }

@@ -12,6 +12,7 @@ hyper = { version = "1.3.1", features = ["full"] }
 hyper-reverse-proxy = { git = "https://github.com/stefansundin/hyper-reverse-proxy.git", branch = "igloo", version = "0.5.2-dev" }
 hyper-rustls = { version = "0.27.1", features = ["http2"] }
 hyper-util = { version = "0.1.3", features = ["server"] }
+log = "0.4.21"
 reqwest = { version = "0.12.4", default-features = false, features = ["rustls-tls"] }
 rustls = "0.23.7"
 rustls-pemfile = "2.1.2"

@@ -1,4 +1,5 @@
 use hyper::StatusCode;
+use log::{error, info};
 use rustls::{
   pki_types::{CertificateDer, PrivateKeyDer},
   ServerConfig,
@@ -48,10 +49,10 @@ pub async fn reload_cert(verbose: bool) {
     }
     Ok(None) => {
       if verbose {
-        eprintln!("Certificate is already up to date");
+        info!("Certificate is already up to date");
       }
     }
-    Err(err) => eprintln!("Error updating certificate: {}", err),
+    Err(err) => error!("Error updating certificate: {}", err),
   }
 }
 
@@ -103,7 +104,7 @@ pub async fn get_tls_data() -> Result<Option<TlsData>, Box<dyn Error + Send + Sy
   let cert_key: PrivateKeyDer<'_>;
 
   if let Ok(certificate_url) = env::var("CERTIFICATE_URL") {
-    println!("Downloading certificate bundle from {}", certificate_url);
+    info!("Downloading certificate bundle from {}", certificate_url);
 
     let etag_option = etag().read().unwrap().to_owned();
     let new_etag: Option<String>;
@@ -203,14 +204,14 @@ pub async fn get_tls_data() -> Result<Option<TlsData>, Box<dyn Error + Send + Sy
       other => other.to_string(),
     })
     .collect::<Vec<String>>();
-  eprintln!("Loading certificate for DNS names: {}", names.join(", "));
+  info!("Loading certificate for DNS names: {}", names.join(", "));
 
   let not_after = cert.1.validity.not_after.timestamp() as u64;
   let now = SystemTime::now()
     .duration_since(UNIX_EPOCH)
     .unwrap()
     .as_secs();
-  eprintln!(
+  info!(
     "Expires at: {} ({})",
     cert.1.validity.not_after,
     not_after

@@ -1390,6 +1390,7 @@ dependencies = [
  "hyper-reverse-proxy",
  "hyper-rustls 0.27.1",
  "hyper-util",
+ "log",
  "reqwest",
  "rustls 0.23.7",
  "rustls-pemfile 2.1.2",
