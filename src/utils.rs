@@ -11,12 +11,49 @@ use std::{
   sync::{Arc, OnceLock, RwLock},
   time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::OnceCell;
 use tokio_rustls::TlsAcceptor;
 use x509_parser::prelude::FromDer;
 use x509_parser::{certificate::X509Certificate, extensions::GeneralName};
 use zip::ZipArchive;
 
 use crate::s3_url;
+
+pub struct TlsData {
+  pub tls_acceptor: TlsAcceptor,
+  pub not_after: u64,
+}
+
+pub async fn tls_data_lock() -> &'static RwLock<TlsData> {
+  static TLS_ACCEPTOR_LOCK: OnceCell<RwLock<TlsData>> = OnceCell::const_new();
+  TLS_ACCEPTOR_LOCK
+    .get_or_init(|| async {
+      let tls_acceptor = get_tls_data()
+        .await
+        .expect("Error constructing the TLS acceptor")
+        .expect("Invalid response code received when retrieving certificate bundle");
+      RwLock::new(tls_acceptor)
+    })
+    .await
+}
+
+pub async fn reload_cert(verbose: bool) {
+  match get_tls_data().await {
+    Ok(Some(new_tls_data)) => {
+      let mut tls_data = tls_data_lock()
+        .await
+        .write()
+        .expect("error getting write-access to TlsData");
+      *tls_data = new_tls_data;
+    }
+    Ok(None) => {
+      if verbose {
+        eprintln!("Certificate is already up to date");
+      }
+    }
+    Err(err) => eprintln!("Error updating certificate: {}", err),
+  }
+}
 
 fn etag() -> &'static RwLock<Option<String>> {
   static ETAG: OnceLock<RwLock<Option<String>>> = OnceLock::new();
@@ -61,7 +98,7 @@ fn extract_cert_and_key<R: Read + Seek>(
   return Ok((certs.unwrap(), key.unwrap()));
 }
 
-pub async fn get_tls_acceptor() -> Result<Option<TlsAcceptor>, Box<dyn Error + Send + Sync>> {
+pub async fn get_tls_data() -> Result<Option<TlsData>, Box<dyn Error + Send + Sync>> {
   let certs: Vec<CertificateDer<'_>>;
   let cert_key: PrivateKeyDer<'_>;
 
@@ -189,7 +226,10 @@ pub async fn get_tls_acceptor() -> Result<Option<TlsAcceptor>, Box<dyn Error + S
     server_config.alpn_protocols.insert(0, b"h2".to_vec());
   }
 
-  return Ok(Some(TlsAcceptor::from(Arc::new(server_config))));
+  return Ok(Some(TlsData {
+    tls_acceptor: TlsAcceptor::from(Arc::new(server_config)),
+    not_after,
+  }));
 }
 
 pub fn humanize_duration(seconds: u64) -> String {
@@ -219,4 +259,12 @@ pub fn humanize_duration(seconds: u64) -> String {
 
   let days = hours / 24;
   return format!("{} days", days);
+}
+
+pub fn get_file_mtime(path: &str) -> Option<u64> {
+  fs::metadata(path)
+    .and_then(|metadata| metadata.modified())
+    .ok()
+    .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+    .map(|duration| duration.as_secs())
 }

@@ -2,8 +2,8 @@
 
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, OnceLock, RwLock};
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, io, process};
 
 use http_body_util::combinators::UnsyncBoxBody;
@@ -21,27 +21,13 @@ use hyper_util::server::conn::auto;
 use rustls::{ClientConfig, KeyLogFile};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::OnceCell;
-use tokio_rustls::TlsAcceptor;
+use tokio::time::{interval, sleep};
 
 pub mod s3_url;
 pub mod utils;
 
 type Connector = HttpsConnector<HttpConnector>;
 type ResponseBody = UnsyncBoxBody<Bytes, io::Error>;
-
-async fn tls_acceptor_lock() -> &'static RwLock<TlsAcceptor> {
-  static TLS_ACCEPTOR_LOCK: OnceCell<RwLock<TlsAcceptor>> = OnceCell::const_new();
-  TLS_ACCEPTOR_LOCK
-    .get_or_init(|| async {
-      let tls_acceptor = utils::get_tls_acceptor()
-        .await
-        .expect("Error constructing the TLS acceptor")
-        .expect("Invalid response code received when retrieving certificate bundle");
-      RwLock::new(tls_acceptor)
-    })
-    .await
-}
 
 fn upstream_url() -> &'static str {
   static UPSTREAM_URL: OnceLock<String> = OnceLock::new();
@@ -229,22 +215,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting HTTPS reverse proxy on port {}", https_port);
 
     // Eagerly load the certificate
-    tls_acceptor_lock().await;
+    utils::tls_data_lock().await;
 
     // Send the process a SIGHUP to reload the certificate
     tokio::spawn(async {
       let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
       while sighup.recv().await.is_some() {
-        match utils::get_tls_acceptor().await {
-          Ok(Some(new_tls_acceptor)) => {
-            let mut tls_acceptor = tls_acceptor_lock()
-              .await
-              .write()
-              .expect("error getting write-access to TlsAcceptor");
-            *tls_acceptor = new_tls_acceptor;
+        utils::reload_cert(true).await;
+      }
+    });
+
+    // Check for a new certificate when the expiration date nears
+    tokio::spawn(async {
+      if env::var("CERTIFICATE_URL").is_ok() {
+        loop {
+          let not_after = utils::tls_data_lock().await.read().unwrap().not_after;
+          let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+          let seconds_until_expiration = not_after.saturating_sub(now);
+
+          if seconds_until_expiration == 0 {
+            eprintln!("WARNING: The certificate has expired!!");
+          } else if seconds_until_expiration < 24 * 60 * 60 {
+            eprintln!("WARNING: The certificate expires soon!!");
           }
-          Ok(None) => eprintln!("Certificate is already up to date"),
-          Err(err) => eprintln!("Error updating certificate: {}", err),
+
+          // Check progressively more often the closer the expiration date gets, starting 7 days before the expiration date
+          let seconds_to_sleep = if seconds_until_expiration > 8 * 24 * 60 * 60 {
+            24 * 60 * 60 + seconds_until_expiration - 8 * 24 * 60 * 60
+          } else if seconds_until_expiration > 2 * 24 * 60 * 60 {
+            24 * 60 * 60 + seconds_until_expiration % (24 * 60 * 60)
+          } else if seconds_until_expiration > 24 * 60 * 60 {
+            60 * 60 + seconds_until_expiration % (24 * 60 * 60)
+          } else if seconds_until_expiration > 2 * 60 * 60 {
+            60 * 60 + seconds_until_expiration % (60 * 60)
+          } else if seconds_until_expiration > 60 * 60 {
+            5 * 60 + seconds_until_expiration % (60 * 60)
+          } else if seconds_until_expiration > 5 * 60 {
+            60 + seconds_until_expiration % (5 * 60)
+          } else {
+            60
+          };
+
+          sleep(Duration::from_secs(seconds_to_sleep)).await;
+
+          let not_after_post_sleep = utils::tls_data_lock().await.read().unwrap().not_after;
+          if not_after != not_after_post_sleep {
+            // Certificate was already reloaded manually with a SIGHUP
+            continue;
+          }
+
+          utils::reload_cert(false).await;
+        }
+      } else if let Ok(certificate_path) = env::var("CERTIFICATE_PATH") {
+        // Since filesystem access is cheap, check once every minute if the certificate file has been modified
+        let mut mtime = utils::get_file_mtime(&certificate_path);
+        let mut interval = interval(Duration::from_secs(60));
+        interval.tick().await;
+        loop {
+          interval.tick().await;
+          let new_mtime = utils::get_file_mtime(&certificate_path);
+          if new_mtime == mtime {
+            continue;
+          }
+          mtime = new_mtime;
+          if mtime.is_some() {
+            utils::reload_cert(false).await;
+          }
         }
       }
     });
@@ -253,7 +292,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
       loop {
         let (stream, remote_addr) = listener.accept().await.expect("error accepting connection");
         let client_ip = remote_addr.ip();
-        let tls_accept = tls_acceptor_lock().await.read().unwrap().accept(stream);
+        let tls_accept = utils::tls_data_lock()
+          .await
+          .read()
+          .unwrap()
+          .tls_acceptor
+          .accept(stream);
 
         tokio::task::spawn(async move {
           let tls_stream = match tls_accept.await {
