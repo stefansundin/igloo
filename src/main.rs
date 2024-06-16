@@ -18,7 +18,7 @@ use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use rustls::{ClientConfig, KeyLogFile};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
@@ -94,6 +94,8 @@ async fn handle(
   client_ip: IpAddr,
   https: bool,
 ) -> Result<Response<ResponseBody>, Infallible> {
+  debug!("{:?}", req);
+
   if let (false, Some(http_redirect_to)) = (https, http_redirect_to()) {
     let host = req.headers().get("host").and_then(|v| {
       v.to_str()
@@ -164,6 +166,7 @@ async fn handle(
           .headers_mut()
           .insert(strict_transport_security(), value.clone());
       }
+      debug!("{:?}", response);
       Ok(response)
     }
     Err(err) => {

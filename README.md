@@ -44,7 +44,7 @@ You can configure igloo by setting these environment variables:
 | `IDLE_TIMEOUT`           | Configure the `Keep-Alive` idle timeout for HTTP/1.1. You may have to set this to a lower value than what your upstream server uses. The hyper default is 90 seconds. | Not set | Not set | Optional |
 | `USE_H2`                 | Set this to enable HTTP/2. Requires that the upstream server also supports HTTP/2 (igloo is not able to translate requests to HTTP/1.1 yet). | Not set | Not set | Optional |
 | `AWS_S3_ENDPOINT`        | Set this if you want to use a custom S3 endpoint. Setting this also forces path style access. | Not set | Not set | Optional |
-| `RUST_LOG`               | Set this to adjust the log level. | `igloo=info` | `igloo=info` | Optional |
+| `RUST_LOG`               | Set this to adjust the log level. Use `igloo=debug` to see request-level logs. | `igloo=info` | `igloo=info` | Optional |
 | `RUST_BACKTRACE`         | Set this to get a stack trace on crashes. Could be useful if you submit a bug report. | Not set | Not set | Optional |
 | `SSLKEYLOGFILE`          | Debugging option that allows other programs to decrypt the TLS traffic. | Not set | Not set | Optional |
 | `SSL_CERT_FILE`          | The CA bundle to use. | `/ca-certificates.crt` | Not set | Optional |
