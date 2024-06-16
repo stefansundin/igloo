@@ -31,9 +31,9 @@ You can configure igloo by setting these environment variables:
 | Key                      | Description | Default in docker | Default in binary | Required? |
 | ------------------------ | ----------- | ----------------- | ----------------- | --------- |
 | `UPSTREAM_URL`           | Where to proxy requests to, e.g. `http://localhost:3000`. | Not set | Not set | **Required** |
-| `CERTIFICATE_URL`        | Where to fetch the certificate from. Can be an `http://`, `https://`, or `s3://` URL. Should point to a `.zip` file with a `privkey*.pem` and `fullchain*.pem` or `*.key` and `*.crt`. Make sure your S3 bucket is private! | Not set | Not set | **Required**, or use `CERTIFICATE_PATH` and `CERTIFICATE_KEY_PATH`. |
-| `CERTIFICATE_PATH`       | Path to a certificate file. | Not set | Not set | Required unless `CERTIFICATE_URL` is used. |
-| `CERTIFICATE_KEY_PATH`   | Path to the private key for the certificate. | Not set | Not set | Required unless `CERTIFICATE_URL` is used. |
+| `CERTIFICATE_URL`        | Where to fetch the certificate from. Can be an `http://`, `https://`, or `s3://` URL. Should point to a `.zip` file with a `privkey*.pem` and `fullchain*.pem` or `*.key` and `*.crt`. Make sure your S3 bucket is private! | Not set | Not set | Optional |
+| `CERTIFICATE_PATH`       | Path to a certificate file. | Not set | Not set | Optional |
+| `CERTIFICATE_KEY_PATH`   | Path to the private key for the certificate. | Not set | Not set | Optional |
 | `HOST`                   | The interface to listen to. Set to `127.0.0.1` to restrict connections to programs running on your computer. | `0.0.0.0` | `0.0.0.0` | Can use default |
 | `HTTP_PORT`              | The port that igloo listens to for its HTTP server. | `80` | `3000` | Can use default |
 | `HTTPS_PORT`             | The port that igloo listens to for its HTTPS server. | `443` | `3001` | Can use default |
