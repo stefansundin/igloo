@@ -6,8 +6,10 @@ services:
       - 3001:443
     environment:
       UPSTREAM_URL: http://example.com
+      REWRITE_HOST: example.com
+      RUST_LOG: igloo=debug
       CERTIFICATE_PATH: /certs/fullchain.pem
       CERTIFICATE_KEY_PATH: /certs/privkey.pem
     volumes:
       # Mount a directory containing the certificate files instead of mounting the files directly (allows for updating the certificate):
-      - certs:/certs:ro
+      - ./certs:/certs:ro
