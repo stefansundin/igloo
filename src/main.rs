@@ -187,12 +187,12 @@ async fn handle(
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   env_logger::init_from_env(env_logger::Env::default().default_filter_or("igloo=info"));
 
-  // Send the process a SIGINT to terminate the program
+  // Send the process a SIGTERM to terminate the program
   tokio::spawn(async {
-    let mut sigint = signal(SignalKind::interrupt()).expect("error listening for SIGINT");
-    if sigint.recv().await.is_some() {
-      process::exit(0);
-    }
+    let mut sigterm = signal(SignalKind::terminate()).expect("error listening for SIGTERM");
+    sigterm.recv().await;
+    debug!("Received SIGTERM");
+    process::exit(0);
   });
 
   let host = env::var("HOST").unwrap_or("0.0.0.0".to_string());
