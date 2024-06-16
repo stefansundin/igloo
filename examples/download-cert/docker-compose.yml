@@ -1,0 +1,12 @@
+services:
+  igloo:
+    image: stefansundin/igloo
+    ports:
+      - 3000:80
+      - 3001:443
+    environment:
+      UPSTREAM_URL: http://example.com
+      # Download from an S3 bucket. Make sure your S3 bucket is private!
+      CERTIFICATE_URL: s3://mybucket/mycert.zip
+      # You can also download the certificate using http or https, but make sure that the URL is not reachable from the internet:
+      # CERTIFICATE_URL: https://internal.example.com/mycert.zip

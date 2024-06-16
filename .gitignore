@@ -1,4 +1,8 @@
 /target
+*.pem
+*.crt
+*.key
+*.zip
 
 Thumbs.db
 *.DS_Store
