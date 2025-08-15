@@ -19,7 +19,10 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use log::{debug, error, info, warn};
-use rustls::{ClientConfig, KeyLogFile};
+use rustls::{
+  crypto::{aws_lc_rs, CryptoProvider},
+  ClientConfig, KeyLogFile,
+};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::{interval, sleep};
@@ -186,6 +189,8 @@ async fn handle(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   env_logger::init_from_env(env_logger::Env::default().default_filter_or("igloo=info"));
+  CryptoProvider::install_default(aws_lc_rs::default_provider())
+    .expect("error installing CryptoProvider");
 
   // Send the process a SIGTERM to terminate the program
   tokio::spawn(async {
