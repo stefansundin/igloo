@@ -39,7 +39,7 @@ LABEL org.opencontainers.image.url="https://github.com/stefansundin/igloo"
 COPY --from=builder /dist /
 
 ENV SSL_CERT_FILE=/ca-certificates.crt
-ENV HOST=0.0.0.0
+ENV HOST=[::]
 ENV HTTP_PORT=80
 ENV HTTPS_PORT=443
 

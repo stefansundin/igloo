@@ -195,7 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     process::exit(0);
   });
 
-  let host = env::var("HOST").unwrap_or("0.0.0.0".to_string());
+  let host = env::var("HOST").unwrap_or("[::]".to_string());
   let http_port = env::var("HTTP_PORT")
     .unwrap_or("3000".to_string())
     .parse::<u16>()
