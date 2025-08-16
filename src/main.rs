@@ -27,6 +27,7 @@ use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::{interval, sleep};
 
+pub mod cert_resolver;
 pub mod s3_url;
 pub mod utils;
 
@@ -113,7 +114,7 @@ async fn handle(
         })
         .ok()
     });
-    if host.is_none() || host.is_some_and(|host| !allowed_hosts.contains(&host)) {
+    if !utils::includes_host(&host, allowed_hosts) {
       return Ok(
         Response::builder()
           .status(StatusCode::NOT_FOUND)
@@ -303,7 +304,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
           let tls_stream = match tls_accept.await {
             Ok(tls_stream) => tls_stream,
             Err(err) => {
-              error!("TLS handshake error: {:?}", err);
+              debug!("TLS handshake error: {:?}", err);
               return;
             }
           };

@@ -1,6 +1,6 @@
 Igloo is a small HTTP reverse proxy intended to solve the following problems:
 
-- Terminate TLS and proxy requests to another host.
+- Terminate TLS and proxy requests to another server.
 - Download the certificate and key from a private S3 bucket (never writing it to disk).
 - Automatically checks for a new certificate when the current one nears expiration.
 - Able to run as a Docker container.
@@ -38,11 +38,12 @@ You can configure igloo by setting these environment variables:
 | `HTTP_PORT`              | The port that igloo listens to for its HTTP server. | `80` | `3000` | Can use default |
 | `HTTPS_PORT`             | The port that igloo listens to for its HTTPS server. | `443` | `3001` | Can use default |
 | `HTTP_REDIRECT_TO`       | Set this to a URL to redirect HTTP traffic with a 301 redirect. You'd normally use this to redirect to the `https://` endpoint. Can optionally include a path, but you probably want to use something like `https://example.com` (i.e. without a trailing `/`). The request path is appended. | Not set | Not set | Optional |
-| `ALLOWED_HOSTS`          | Comma-separated list of allowed `Host` headers in incoming requests. Useful if you want to ignore bot traffic. | Not set | Not set | Optional |
+| `ALLOWED_HOSTS`          | Comma-separated list of allowed `Host` headers in incoming requests. Useful if you want to ignore bot traffic. Subdomain wildcard is supported (`*.example.com`). | Not set | Not set | Optional |
 | `REWRITE_HOST`           | Rewrite the `Host` header to this value when proxying requests to the upstream server. | Not set | Not set | Optional |
 | `HSTS`                   | Set this to send a `Strict-Transport-Security` header in responses, e.g. `max-age=31536000`. | Not set | Not set | Optional |
 | `IDLE_TIMEOUT`           | Configure the `Keep-Alive` idle timeout for HTTP/1.1. You may have to set this to a lower value than what your upstream server uses. The hyper default is 90 seconds. | Not set | Not set | Optional |
 | `USE_H2`                 | Set this to enable HTTP/2. Requires that the upstream server also supports HTTP/2 (igloo is not able to translate requests to HTTP/1.1 yet). | Not set | Not set | Optional |
+| `REQUIRE_SNI`            | Normally igloo only serves the certificate for SNI connections with a hostname that is present in the certificate. This is useful to ignore bot traffic. Set this to `false` to always serve the certificate. | `true` | `true` | Optional |
 | `AWS_S3_ENDPOINT`        | Set this if you want to use a custom S3 endpoint. Setting this also forces path style access. | Not set | Not set | Optional |
 | `RUST_LOG`               | Set this to adjust the log level. Use `igloo=debug` to see request-level logs. | `igloo=info` | `igloo=info` | Optional |
 | `RUST_BACKTRACE`         | Set this to get a stack trace on crashes. Could be useful if you submit a bug report. | Not set | Not set | Optional |

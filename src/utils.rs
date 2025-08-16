@@ -1,8 +1,9 @@
 use hyper::StatusCode;
 use log::{error, info};
 use rustls::{
+  crypto::aws_lc_rs,
   pki_types::{CertificateDer, PrivateKeyDer},
-  ServerConfig,
+  sign, ServerConfig,
 };
 use std::{
   env,
@@ -18,11 +19,20 @@ use x509_parser::prelude::FromDer;
 use x509_parser::{certificate::X509Certificate, extensions::GeneralName};
 use zip::ZipArchive;
 
+use crate::cert_resolver::CertResolver;
 use crate::s3_url;
 
 pub struct TlsData {
   pub tls_acceptor: TlsAcceptor,
   pub not_after: u64,
+}
+
+fn require_sni() -> &'static bool {
+  static REQUIRE_SNI: OnceLock<bool> = OnceLock::new();
+  REQUIRE_SNI.get_or_init(|| {
+    let require_sni = env::var("REQUIRE_SNI").unwrap_or("true".to_string());
+    require_sni == "true"
+  })
 }
 
 pub async fn tls_data_lock() -> &'static RwLock<TlsData> {
@@ -192,7 +202,7 @@ pub async fn get_tls_data() -> Result<Option<TlsData>, Box<dyn Error + Send + Sy
   }
 
   let cert = X509Certificate::from_der(certs.first().unwrap())?;
-  let names = cert
+  let cert_names = cert
     .1
     .subject_alternative_name()?
     .unwrap()
@@ -204,7 +214,10 @@ pub async fn get_tls_data() -> Result<Option<TlsData>, Box<dyn Error + Send + Sy
       other => other.to_string(),
     })
     .collect::<Vec<String>>();
-  info!("Loading certificate for DNS names: {}", names.join(", "));
+  info!(
+    "Loading certificate for DNS names: {}",
+    cert_names.join(", ")
+  );
 
   let not_after = cert.1.validity.not_after.timestamp() as u64;
   let now = SystemTime::now()
@@ -220,9 +233,21 @@ pub async fn get_tls_data() -> Result<Option<TlsData>, Box<dyn Error + Send + Sy
       .unwrap_or("EXPIRED".to_string())
   );
 
-  let mut server_config = ServerConfig::builder()
-    .with_no_client_auth()
-    .with_single_cert(certs, cert_key)?;
+  let mut server_config = if *require_sni() {
+    let provider = aws_lc_rs::default_provider();
+    let certified_key = sign::CertifiedKey::from_der(certs, cert_key, &provider)
+      .expect("error parsing certificate and key");
+    ServerConfig::builder()
+      .with_no_client_auth()
+      .with_cert_resolver(Arc::new(CertResolver {
+        certified_key,
+        cert_names,
+      }))
+  } else {
+    ServerConfig::builder()
+      .with_no_client_auth()
+      .with_single_cert(certs, cert_key)?
+  };
 
   server_config.alpn_protocols = vec![b"http/1.1".to_vec(), b"http/1.0".to_vec()];
 
@@ -272,4 +297,16 @@ pub fn get_file_mtime(path: &str) -> Option<u64> {
     .ok()
     .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
     .map(|duration| duration.as_secs())
+}
+
+pub fn includes_host(host: &Option<&str>, vec: &Vec<&str>) -> bool {
+  return host.is_some_and(|host| {
+    vec.iter().any(|name| {
+      if name.starts_with("*.") {
+        host.ends_with(&name[1..])
+      } else {
+        host == *name
+      }
+    })
+  });
 }
