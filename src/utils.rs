@@ -1,9 +1,10 @@
 use hyper::StatusCode;
 use log::{error, info};
 use rustls::{
+  ServerConfig,
   crypto::aws_lc_rs,
   pki_types::{CertificateDer, PrivateKeyDer},
-  sign, ServerConfig,
+  sign,
 };
 use std::{
   env,

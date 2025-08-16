@@ -1,4 +1,5 @@
 /target
+/vendor
 /examples
 /tests
 .git

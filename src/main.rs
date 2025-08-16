@@ -9,7 +9,7 @@ use std::{env, io, process};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Empty};
 use hyper::body::{Bytes, Incoming};
-use hyper::header::{HeaderName, HeaderValue, HOST};
+use hyper::header::{HOST, HeaderName, HeaderValue};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -20,11 +20,11 @@ use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use log::{debug, error, info, warn};
 use rustls::{
-  crypto::{aws_lc_rs, CryptoProvider},
   ClientConfig, KeyLogFile,
+  crypto::{CryptoProvider, aws_lc_rs},
 };
 use tokio::net::TcpListener;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{interval, sleep};
 
 pub mod cert_resolver;
@@ -148,10 +148,10 @@ async fn handle(
     );
   }
 
-  if let Ok(rewrite_host) = env::var("REWRITE_HOST") {
-    if let Ok(val) = HeaderValue::from_str(&rewrite_host) {
-      req.headers_mut().insert(HOST, val);
-    }
+  if let Ok(rewrite_host) = env::var("REWRITE_HOST")
+    && let Ok(val) = HeaderValue::from_str(&rewrite_host)
+  {
+    req.headers_mut().insert(HOST, val);
   }
 
   match proxy_client().call(client_ip, upstream_url(), req).await {
