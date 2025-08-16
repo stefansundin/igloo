@@ -99,7 +99,8 @@ async fn handle(
 ) -> Result<Response<ResponseBody>, Infallible> {
   debug!("{:?}", req);
 
-  if let (false, Some(http_redirect_to)) = (https, http_redirect_to()) {
+  let allowed_hosts = allowed_hosts();
+  if !allowed_hosts.is_empty() {
     let host = req.headers().get("host").and_then(|v| {
       v.to_str()
         .map(|v| {
@@ -112,10 +113,7 @@ async fn handle(
         })
         .ok()
     });
-    let allowed_hosts = allowed_hosts();
-    if !allowed_hosts.is_empty()
-      && (host.is_none() || host.is_some_and(|host| !allowed_hosts.contains(&host)))
-    {
+    if host.is_none() || host.is_some_and(|host| !allowed_hosts.contains(&host)) {
       return Ok(
         Response::builder()
           .status(StatusCode::NOT_FOUND)
@@ -125,20 +123,13 @@ async fn handle(
           .unwrap(),
       );
     }
+  }
+
+  if let (false, Some(http_redirect_to)) = (https, http_redirect_to()) {
     if req.method() != Method::GET {
       return Ok(
         Response::builder()
           .status(StatusCode::METHOD_NOT_ALLOWED)
-          .body(UnsyncBoxBody::new(
-            Empty::<Bytes>::new().map_err(io::Error::other),
-          ))
-          .unwrap(),
-      );
-    }
-    if host.is_none() {
-      return Ok(
-        Response::builder()
-          .status(StatusCode::INTERNAL_SERVER_ERROR)
           .body(UnsyncBoxBody::new(
             Empty::<Bytes>::new().map_err(io::Error::other),
           ))
