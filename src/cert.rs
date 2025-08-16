@@ -241,7 +241,7 @@ pub async fn get_tls_data() -> Result<Option<TlsData>, Box<dyn Error + Send + Sy
     ServerConfig::builder()
       .with_no_client_auth()
       .with_cert_resolver(Arc::new(CertResolver {
-        certified_key,
+        certified_key: Arc::new(certified_key),
         cert_names,
       }))
   } else {

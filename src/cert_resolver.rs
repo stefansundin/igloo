@@ -8,7 +8,7 @@ use crate::utils;
 
 #[derive(Debug)]
 pub struct CertResolver {
-  pub certified_key: sign::CertifiedKey,
+  pub certified_key: Arc<sign::CertifiedKey>,
   pub cert_names: Vec<String>,
 }
 
@@ -21,6 +21,6 @@ impl ResolvesServerCert for CertResolver {
     ) {
       return None;
     }
-    Some(Arc::new(self.certified_key.clone()))
+    Some(self.certified_key.clone())
   }
 }
