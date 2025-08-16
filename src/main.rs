@@ -27,6 +27,7 @@ use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{interval, sleep};
 
+pub mod cert;
 pub mod cert_resolver;
 pub mod s3_url;
 pub mod utils;
@@ -216,13 +217,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting HTTPS reverse proxy on port {}", https_port);
 
     // Eagerly load the certificate
-    utils::tls_data_lock().await;
+    cert::tls_data_lock().await;
 
     // Send the process a SIGHUP to reload the certificate
     tokio::spawn(async {
       let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
       while sighup.recv().await.is_some() {
-        utils::reload_cert(true).await;
+        cert::reload_cert(true).await;
       }
     });
 
@@ -230,7 +231,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tokio::spawn(async {
       if env::var("CERTIFICATE_URL").is_ok() {
         loop {
-          let not_after = utils::tls_data_lock().await.read().unwrap().not_after;
+          let not_after = cert::tls_data_lock().await.read().unwrap().not_after;
           let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -262,13 +263,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
           sleep(Duration::from_secs(seconds_to_sleep)).await;
 
-          let not_after_post_sleep = utils::tls_data_lock().await.read().unwrap().not_after;
+          let not_after_post_sleep = cert::tls_data_lock().await.read().unwrap().not_after;
           if not_after != not_after_post_sleep {
             // Certificate was already reloaded manually with a SIGHUP
             continue;
           }
 
-          utils::reload_cert(false).await;
+          cert::reload_cert(false).await;
         }
       } else if let Ok(certificate_path) = env::var("CERTIFICATE_PATH") {
         // Since filesystem access is cheap, check once every minute if the certificate file has been modified
@@ -283,7 +284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
           }
           mtime = new_mtime;
           if mtime.is_some() {
-            utils::reload_cert(false).await;
+            cert::reload_cert(false).await;
           }
         }
       }
@@ -293,7 +294,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
       loop {
         let (stream, remote_addr) = listener.accept().await.expect("error accepting connection");
         let client_ip = remote_addr.ip();
-        let tls_accept = utils::tls_data_lock()
+        let tls_accept = cert::tls_data_lock()
           .await
           .read()
           .unwrap()
