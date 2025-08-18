@@ -1,4 +1,14 @@
-use std::{fs, time::UNIX_EPOCH};
+use std::{
+  fs,
+  time::{SystemTime, UNIX_EPOCH},
+};
+
+pub fn get_current_unixtime() -> u64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap()
+    .as_secs()
+}
 
 pub fn humanize_duration(seconds: u64) -> String {
   if seconds == 1 {

@@ -19,6 +19,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use log::{debug, error, info, warn};
+use rustls::ServerConfig;
 use rustls::{
   ClientConfig, KeyLogFile,
   crypto::{CryptoProvider, aws_lc_rs},
@@ -26,6 +27,9 @@ use rustls::{
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{interval, sleep};
+use tokio_rustls::TlsAcceptor;
+
+use crate::cert_resolver::CertResolver;
 
 pub mod cert;
 pub mod cert_resolver;
@@ -127,7 +131,9 @@ async fn handle(
     }
   }
 
-  if let (false, Some(http_redirect_to)) = (https, http_redirect_to()) {
+  if https == false
+    && let Some(http_redirect_to) = http_redirect_to()
+  {
     if req.method() != Method::GET {
       return Ok(
         Response::builder()
@@ -203,7 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     .parse::<u16>()
     .expect("error parsing HTTPS_PORT");
   upstream_url(); // ensure UPSTREAM_URL is set
-  proxy_client(); // ensure the proxy client can be built successfully
+  proxy_client(); // build the proxy client
 
   let use_https = env::var("CERTIFICATE_URL").is_ok()
     || (env::var("CERTIFICATE_PATH").is_ok() && env::var("CERTIFICATE_KEY_PATH").is_ok());
@@ -217,26 +223,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting HTTPS reverse proxy on port {}", https_port);
 
     // Eagerly load the certificate
-    cert::tls_data_lock().await;
-
-    // Send the process a SIGHUP to reload the certificate
-    tokio::spawn(async {
-      let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
-      while sighup.recv().await.is_some() {
-        cert::reload_cert(true).await;
-      }
-    });
+    let mut metadata = cert::load_cert(true, None)
+      .await
+      .expect("error loading certificate");
 
     // Check for a new certificate when the expiration date nears
-    tokio::spawn(async {
+    tokio::spawn(async move {
+      let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
       if env::var("CERTIFICATE_URL").is_ok() {
         loop {
-          let not_after = cert::tls_data_lock().await.read().unwrap().not_after;
           let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-          let seconds_until_expiration = not_after.saturating_sub(now);
+          let seconds_until_expiration = metadata.not_after.saturating_sub(now);
 
           if seconds_until_expiration == 0 {
             warn!("WARNING: The certificate has expired!!");
@@ -261,45 +261,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             60
           };
 
-          sleep(Duration::from_secs(seconds_to_sleep)).await;
-
-          let not_after_post_sleep = cert::tls_data_lock().await.read().unwrap().not_after;
-          if not_after != not_after_post_sleep {
-            // Certificate was already reloaded manually with a SIGHUP
-            continue;
+          let verbose = tokio::select! {
+            _ = sleep(Duration::from_secs(seconds_to_sleep)) => false,
+            _ = sighup.recv() => true,
+          };
+          if let Some(new_metadata) =
+            cert::load_cert(verbose, metadata.etag.as_ref().map(|s| s.as_str())).await
+          {
+            metadata = new_metadata;
           }
-
-          cert::reload_cert(false).await;
         }
       } else if let Ok(certificate_path) = env::var("CERTIFICATE_PATH") {
         // Since filesystem access is cheap, check once every minute if the certificate file has been modified
-        let mut mtime = utils::get_file_mtime(&certificate_path);
+        let mut mtime =
+          utils::get_file_mtime(&certificate_path).unwrap_or_else(utils::get_current_unixtime);
         let mut interval = interval(Duration::from_secs(60));
         interval.tick().await;
+
         loop {
-          interval.tick().await;
-          let new_mtime = utils::get_file_mtime(&certificate_path);
-          if new_mtime == mtime {
-            continue;
-          }
-          mtime = new_mtime;
-          if mtime.is_some() {
-            cert::reload_cert(false).await;
-          }
+          let verbose = tokio::select! {
+            _ = interval.tick() => {
+              let new_mtime =
+                utils::get_file_mtime(&certificate_path).unwrap_or_else(utils::get_current_unixtime);
+              if new_mtime == mtime {
+                continue;
+              }
+              mtime = new_mtime;
+              false
+            },
+            _ = sighup.recv() => true,
+          };
+
+          cert::load_cert(verbose, None).await;
         }
       }
     });
 
     tokio::task::spawn(async move {
+      let mut server_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(CertResolver {}));
+
+      server_config.alpn_protocols = vec![b"http/1.1".to_vec(), b"http/1.0".to_vec()];
+      if env::var("USE_H2").is_ok() {
+        // Warning: Make sure your upstream service supports HTTP/2
+        server_config.alpn_protocols.insert(0, b"h2".to_vec());
+      }
+
+      let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
+
       loop {
-        let (stream, remote_addr) = listener.accept().await.expect("error accepting connection");
+        let (stream, remote_addr) = match listener.accept().await {
+          Ok(conn) => conn,
+          Err(err) => {
+            error!("Error accepting connection: {}", err);
+            continue;
+          }
+        };
         let client_ip = remote_addr.ip();
-        let tls_accept = cert::tls_data_lock()
-          .await
-          .read()
-          .unwrap()
-          .tls_acceptor
-          .accept(stream);
+        let tls_accept = tls_acceptor.accept(stream);
 
         tokio::task::spawn(async move {
           let tls_stream = match tls_accept.await {
@@ -330,7 +350,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   info!("Starting HTTP reverse proxy on port {}", http_port);
 
   loop {
-    let (stream, remote_addr) = listener.accept().await?;
+    let (stream, remote_addr) = match listener.accept().await {
+      Ok(conn) => conn,
+      Err(err) => {
+        error!("Error accepting connection: {}", err);
+        continue;
+      }
+    };
     let client_ip = remote_addr.ip();
     let io = TokioIo::new(stream);
 
