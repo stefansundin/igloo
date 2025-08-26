@@ -314,7 +314,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let (stream, remote_addr) = match listener.accept().await {
           Ok(conn) => conn,
           Err(err) => {
-            error!("Error accepting connection: {}", err);
+            warn!("Error accepting connection: {}", err);
             continue;
           }
         };
@@ -325,7 +325,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
           let tls_stream = match tls_accept.await {
             Ok(tls_stream) => tls_stream,
             Err(err) => {
-              debug!("TLS handshake error: {:?}", err);
+              warn!("TLS handshake error: {:?}", err);
               return;
             }
           };
@@ -335,7 +335,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .serve_connection(io, service_fn(move |req| handle(req, client_ip, true)))
             .await
           {
-            error!("Error serving connection: {:?}", err);
+            warn!("Error serving connection: {:?}", err);
           }
         });
       }
@@ -353,7 +353,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (stream, remote_addr) = match listener.accept().await {
       Ok(conn) => conn,
       Err(err) => {
-        error!("Error accepting connection: {}", err);
+        warn!("Error accepting connection: {}", err);
         continue;
       }
     };
@@ -365,7 +365,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .serve_connection(io, service_fn(move |req| handle(req, client_ip, false)))
         .await
       {
-        error!("Error serving connection: {:?}", err);
+        warn!("Error serving connection: {:?}", err);
       }
     });
   }
