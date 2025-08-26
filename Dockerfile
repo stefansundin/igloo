@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y musl-tools
 RUN mkdir /dist
 RUN cp /etc/ssl/certs/ca-certificates.crt /dist/
 
-WORKDIR /src
+WORKDIR /igloo
 ADD . .
 RUN find
 
