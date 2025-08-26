@@ -3,6 +3,7 @@ FROM rust:1-trixie AS builder
 ARG TARGETARCH
 ARG CARGO_BUILD_JOBS
 ARG CARGO_BUILD_PROFILE=release-build
+ARG FEATURES
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CC=musl-gcc
@@ -26,7 +27,7 @@ RUN case "$TARGETARCH" in \
       *) echo "Does not support $TARGETARCH" && exit 1 ;; \
     esac && \
     rustup target add $TARGET && \
-    cargo build --target $TARGET --profile $CARGO_BUILD_PROFILE && \
+    cargo build --target $TARGET --profile $CARGO_BUILD_PROFILE --features "$FEATURES" && \
     mv target/$TARGET/$CARGO_BUILD_PROFILE/igloo /dist/
 
 

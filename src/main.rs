@@ -188,6 +188,18 @@ async fn handle(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   env_logger::init_from_env(env_logger::Env::default().default_filter_or("igloo=info"));
+
+  #[cfg(feature = "tracing")]
+  {
+    use tracing_subscriber::FmtSubscriber;
+    use tracing_subscriber::filter::LevelFilter;
+
+    let subscriber = FmtSubscriber::builder()
+      .with_max_level(LevelFilter::TRACE)
+      .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+  }
+
   CryptoProvider::install_default(aws_lc_rs::default_provider())
     .expect("error installing CryptoProvider");
 

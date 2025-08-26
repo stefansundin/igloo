@@ -12,7 +12,7 @@ To build a multi-arch docker image you can run:
 docker buildx create --use --name multiarch --node multiarch0
 
 # Beta release (may be limited to one architecture):
-docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64 --build-arg CARGO_BUILD_PROFILE=debug-build -t stefansundin/igloo:beta .
+docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64 --build-arg CARGO_BUILD_PROFILE=debug-build --build-arg FEATURES=tracing -t stefansundin/igloo:beta .
 
 # You probably want to change the tag name if you are not me:
 docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64 -t stefansundin/igloo:v0.1.0 .
