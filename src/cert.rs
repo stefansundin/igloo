@@ -48,7 +48,7 @@ pub async fn load_cert(verbose: bool, etag: Option<&str>) -> Option<CertificateM
       return None;
     }
     Err(err) => {
-      error!("Error loading certificate: {}", err);
+      error!("Error loading certificate: {:?}", err);
       return None;
     }
   }
