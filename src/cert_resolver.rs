@@ -11,8 +11,8 @@ use rustls::{
 use crate::{cert::certificate_data_lock, utils};
 
 fn require_sni() -> &'static bool {
-  static REQUIRE_SNI: OnceLock<bool> = OnceLock::new();
-  REQUIRE_SNI.get_or_init(|| {
+  static DATA: OnceLock<bool> = OnceLock::new();
+  DATA.get_or_init(|| {
     let require_sni = env::var("REQUIRE_SNI").unwrap_or("true".to_string());
     require_sni == "true"
   })
@@ -26,12 +26,7 @@ impl ResolvesServerCert for CertResolver {
     match *certificate_data_lock().read().unwrap() {
       None => None,
       Some(ref certificate_data) => {
-        if *require_sni()
-          && !utils::includes_host(
-            &client_hello.server_name(),
-            &certificate_data.names.iter().map(String::as_str).collect(),
-          )
-        {
+        if *require_sni() && !utils::includes_host(&client_hello.server_name(), &certificate_data.names.iter().map(String::as_str).collect()) {
           return None;
         }
 

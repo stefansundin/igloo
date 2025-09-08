@@ -4,10 +4,7 @@ use std::{
 };
 
 pub fn get_current_unixtime() -> u64 {
-  SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .unwrap()
-    .as_secs()
+  SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
 }
 
 pub fn humanize_duration(seconds: u64) -> String {
@@ -47,6 +44,7 @@ pub fn get_file_mtime(path: &str) -> Option<u64> {
     .map(|duration| duration.as_secs())
 }
 
+#[rustfmt::skip]
 pub fn includes_host(host: &Option<&str>, vec: &Vec<&str>) -> bool {
   return host.is_some_and(|host| {
     vec.iter().any(|name| {

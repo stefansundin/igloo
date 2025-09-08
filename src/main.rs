@@ -9,7 +9,7 @@ use std::{env, io, process};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Empty};
 use hyper::body::{Bytes, Incoming};
-use hyper::header::{HOST, HeaderName, HeaderValue};
+use hyper::header::{self, HeaderName, HeaderValue};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -34,88 +34,63 @@ use crate::cert_resolver::CertResolver;
 pub mod cert;
 pub mod cert_resolver;
 pub mod s3_url;
+pub mod types;
 pub mod utils;
 
 type Connector = HttpsConnector<HttpConnector>;
 type ResponseBody = UnsyncBoxBody<Bytes, io::Error>;
 
 fn upstream_url() -> &'static str {
-  static UPSTREAM_URL: OnceLock<String> = OnceLock::new();
-  UPSTREAM_URL.get_or_init(|| env::var("UPSTREAM_URL").expect("UPSTREAM_URL is not configured"))
+  static DATA: OnceLock<String> = OnceLock::new();
+  DATA.get_or_init(|| env::var("UPSTREAM_URL").expect("UPSTREAM_URL is not configured"))
 }
 
 fn allowed_hosts() -> &'static Vec<&'static str> {
-  static ALLOWED_HOSTS: OnceLock<Vec<&str>> = OnceLock::new();
-  ALLOWED_HOSTS.get_or_init(|| {
-    env::var("ALLOWED_HOSTS")
-      .map(|v| v.leak().split(',').collect())
-      .unwrap_or_default()
-  })
+  static DATA: OnceLock<Vec<&str>> = OnceLock::new();
+  DATA.get_or_init(|| env::var("ALLOWED_HOSTS").map(|v| v.leak().split(',').collect()).unwrap_or_default())
 }
 
 fn http_redirect_to() -> &'static Option<String> {
-  static HTTP_REDIRECT_TO: OnceLock<Option<String>> = OnceLock::new();
-  HTTP_REDIRECT_TO.get_or_init(|| env::var("HTTP_REDIRECT_TO").ok())
+  static DATA: OnceLock<Option<String>> = OnceLock::new();
+  DATA.get_or_init(|| env::var("HTTP_REDIRECT_TO").ok())
 }
 
 fn strict_transport_security() -> &'static HeaderName {
-  static STRICT_TRANSPORT_SECURITY: OnceLock<HeaderName> = OnceLock::new();
-  STRICT_TRANSPORT_SECURITY.get_or_init(|| HeaderName::from_static("strict-transport-security"))
+  static DATA: OnceLock<HeaderName> = OnceLock::new();
+  DATA.get_or_init(|| HeaderName::from_static("strict-transport-security"))
 }
 
 fn hsts() -> &'static Option<HeaderValue> {
-  static HSTS: OnceLock<Option<HeaderValue>> = OnceLock::new();
-  HSTS.get_or_init(|| {
-    env::var("HSTS")
-      .ok()
-      .map(|value| HeaderValue::from_static(value.leak()))
-  })
+  static DATA: OnceLock<Option<HeaderValue>> = OnceLock::new();
+  DATA.get_or_init(|| env::var("HSTS").ok().map(|value| HeaderValue::from_static(value.leak())))
 }
 
 fn proxy_client() -> &'static ReverseProxy<Connector> {
-  static PROXY_CLIENT: OnceLock<ReverseProxy<Connector>> = OnceLock::new();
-  PROXY_CLIENT.get_or_init(|| {
-    let mut tls_config = ClientConfig::builder()
-      .with_native_roots()
-      .expect("with_native_roots")
-      .with_no_client_auth();
+  static DATA: OnceLock<ReverseProxy<Connector>> = OnceLock::new();
+  DATA.get_or_init(|| {
+    let mut tls_config = ClientConfig::builder().with_native_roots().expect("with_native_roots").with_no_client_auth();
     tls_config.key_log = Arc::new(KeyLogFile::new());
-    let connector = Connector::builder()
-      .with_tls_config(tls_config)
-      .https_or_http()
-      .enable_http1()
-      .enable_http2()
-      .build();
+    let connector = Connector::builder().with_tls_config(tls_config).https_or_http().enable_http1().enable_http2().build();
     let mut client_builder = hyper_util::client::legacy::Builder::new(TokioExecutor::new());
     if let Ok(v) = env::var("IDLE_TIMEOUT") {
       let idle_timeout = v.parse::<u64>().expect("error parsing IDLE_TIMEOUT");
-      client_builder
-        .pool_timer(TokioTimer::new())
-        .pool_idle_timeout(Duration::from_secs(idle_timeout));
+      client_builder.pool_timer(TokioTimer::new()).pool_idle_timeout(Duration::from_secs(idle_timeout));
     }
     let client = client_builder.build::<_, Incoming>(connector);
     ReverseProxy::new(client)
   })
 }
 
-async fn handle(
-  mut req: Request<Incoming>,
-  client_ip: IpAddr,
-  https: bool,
-) -> Result<Response<ResponseBody>, Infallible> {
+async fn handle(mut req: Request<Incoming>, client_ip: IpAddr, https: bool) -> Result<Response<ResponseBody>, Infallible> {
   debug!("{:?}", req);
 
   let allowed_hosts = allowed_hosts();
   if !allowed_hosts.is_empty() {
-    let host = req.headers().get("host").and_then(|v| {
+    let host = req.headers().get(header::HOST).and_then(|v| {
       v.to_str()
         .map(|v| {
           let port_sep = v.find(':');
-          if let Some(idx) = port_sep {
-            v.split_at(idx).0
-          } else {
-            v
-          }
+          if let Some(idx) = port_sep { v.split_at(idx).0 } else { v }
         })
         .ok()
     });
@@ -123,24 +98,18 @@ async fn handle(
       return Ok(
         Response::builder()
           .status(StatusCode::NOT_FOUND)
-          .body(UnsyncBoxBody::new(
-            Empty::<Bytes>::new().map_err(io::Error::other),
-          ))
+          .body(UnsyncBoxBody::new(Empty::<Bytes>::new().map_err(io::Error::other)))
           .unwrap(),
       );
     }
   }
 
-  if https == false
-    && let Some(http_redirect_to) = http_redirect_to()
-  {
+  if !https && let Some(http_redirect_to) = http_redirect_to() {
     if req.method() != Method::GET {
       return Ok(
         Response::builder()
           .status(StatusCode::METHOD_NOT_ALLOWED)
-          .body(UnsyncBoxBody::new(
-            Empty::<Bytes>::new().map_err(io::Error::other),
-          ))
+          .body(UnsyncBoxBody::new(Empty::<Bytes>::new().map_err(io::Error::other)))
           .unwrap(),
       );
     }
@@ -148,9 +117,7 @@ async fn handle(
       Response::builder()
         .status(StatusCode::MOVED_PERMANENTLY)
         .header("Location", format!("{}{}", http_redirect_to, req.uri()))
-        .body(UnsyncBoxBody::new(
-          Empty::<Bytes>::new().map_err(io::Error::other),
-        ))
+        .body(UnsyncBoxBody::new(Empty::<Bytes>::new().map_err(io::Error::other)))
         .unwrap(),
     );
   }
@@ -158,15 +125,13 @@ async fn handle(
   if let Ok(rewrite_host) = env::var("REWRITE_HOST")
     && let Ok(val) = HeaderValue::from_str(&rewrite_host)
   {
-    req.headers_mut().insert(HOST, val);
+    req.headers_mut().insert(header::HOST, val);
   }
 
   match proxy_client().call(client_ip, upstream_url(), req).await {
     Ok(mut response) => {
       if let Some(value) = hsts() {
-        response
-          .headers_mut()
-          .insert(strict_transport_security(), value.clone());
+        response.headers_mut().insert(strict_transport_security(), value.clone());
       }
       debug!("{:?}", response);
       Ok(response)
@@ -176,9 +141,7 @@ async fn handle(
       Ok(
         Response::builder()
           .status(StatusCode::INTERNAL_SERVER_ERROR)
-          .body(UnsyncBoxBody::new(
-            Empty::<Bytes>::new().map_err(io::Error::other),
-          ))
+          .body(UnsyncBoxBody::new(Empty::<Bytes>::new().map_err(io::Error::other)))
           .unwrap(),
       )
     }
@@ -194,14 +157,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use tracing_subscriber::FmtSubscriber;
     use tracing_subscriber::filter::LevelFilter;
 
-    let subscriber = FmtSubscriber::builder()
-      .with_max_level(LevelFilter::TRACE)
-      .finish();
+    let subscriber = FmtSubscriber::builder().with_max_level(LevelFilter::TRACE).finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
   }
 
-  CryptoProvider::install_default(aws_lc_rs::default_provider())
-    .expect("error installing CryptoProvider");
+  CryptoProvider::install_default(aws_lc_rs::default_provider()).expect("error installing CryptoProvider");
 
   // Send the process a SIGTERM to terminate the program
   tokio::spawn(async {
@@ -212,42 +172,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   });
 
   let host = env::var("HOST").unwrap_or("[::]".to_string());
-  let http_port = env::var("HTTP_PORT")
-    .unwrap_or("3000".to_string())
-    .parse::<u16>()
-    .expect("error parsing HTTP_PORT");
-  let https_port = env::var("HTTPS_PORT")
-    .unwrap_or("3001".to_string())
-    .parse::<u16>()
-    .expect("error parsing HTTPS_PORT");
+  let http_port = env::var("HTTP_PORT").unwrap_or("3000".to_string()).parse::<u16>().expect("error parsing HTTP_PORT");
+  let https_port = env::var("HTTPS_PORT").unwrap_or("3001".to_string()).parse::<u16>().expect("error parsing HTTPS_PORT");
   upstream_url(); // ensure UPSTREAM_URL is set
   proxy_client(); // build the proxy client
 
-  let use_https = env::var("CERTIFICATE_URL").is_ok()
-    || (env::var("CERTIFICATE_PATH").is_ok() && env::var("CERTIFICATE_KEY_PATH").is_ok());
+  let use_https = env::var("CERTIFICATE_URL").is_ok() || (env::var("CERTIFICATE_PATH").is_ok() && env::var("CERTIFICATE_KEY_PATH").is_ok());
   if use_https {
     let bind_addr = format!("{}:{}", host, https_port);
-    let addr = bind_addr
-      .parse::<SocketAddr>()
-      .expect("error parsing bind address");
+    let addr = bind_addr.parse::<SocketAddr>().expect("error parsing bind address");
 
     let listener = TcpListener::bind(addr).await?;
     info!("Starting HTTPS reverse proxy on port {}", https_port);
 
     // Eagerly load the certificate
-    let mut metadata = cert::load_cert(true, None)
-      .await
-      .expect("error loading certificate");
+    let mut metadata = cert::load_cert(true, None).await.expect("error loading certificate");
 
     // Check for a new certificate when the expiration date nears
     tokio::spawn(async move {
       let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
       if env::var("CERTIFICATE_URL").is_ok() {
         loop {
-          let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+          let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
           let seconds_until_expiration = metadata.not_after.saturating_sub(now);
 
           if seconds_until_expiration == 0 {
@@ -277,16 +223,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             _ = sleep(Duration::from_secs(seconds_to_sleep)) => false,
             _ = sighup.recv() => true,
           };
-          if let Some(new_metadata) =
-            cert::load_cert(verbose, metadata.etag.as_ref().map(|s| s.as_str())).await
-          {
+          if let Some(new_metadata) = cert::load_cert(verbose, metadata.etag.as_deref()).await {
             metadata = new_metadata;
           }
         }
       } else if let Ok(certificate_path) = env::var("CERTIFICATE_PATH") {
         // Since filesystem access is cheap, check once every minute if the certificate file has been modified
-        let mut mtime =
-          utils::get_file_mtime(&certificate_path).unwrap_or_else(utils::get_current_unixtime);
+        let mut mtime = utils::get_file_mtime(&certificate_path).unwrap_or_else(utils::get_current_unixtime);
         let mut interval = interval(Duration::from_secs(60));
         interval.tick().await;
 
@@ -310,9 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     tokio::task::spawn(async move {
-      let mut server_config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_cert_resolver(Arc::new(CertResolver {}));
+      let mut server_config = ServerConfig::builder().with_no_client_auth().with_cert_resolver(Arc::new(CertResolver {}));
 
       server_config.alpn_protocols = vec![b"http/1.1".to_vec(), b"http/1.0".to_vec()];
       if env::var("USE_H2").is_ok() {
@@ -343,10 +284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
           };
           let io = TokioIo::new(tls_stream);
 
-          if let Err(err) = auto::Builder::new(TokioExecutor::new())
-            .serve_connection(io, service_fn(move |req| handle(req, client_ip, true)))
-            .await
-          {
+          if let Err(err) = auto::Builder::new(TokioExecutor::new()).serve_connection(io, service_fn(move |req| handle(req, client_ip, true))).await {
             warn!("Error serving connection: {:?}", err);
           }
         });
@@ -355,9 +293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   }
 
   let bind_addr = format!("{}:{}", host, http_port);
-  let addr = bind_addr
-    .parse::<SocketAddr>()
-    .expect("error parsing bind address");
+  let addr = bind_addr.parse::<SocketAddr>().expect("error parsing bind address");
   let listener = TcpListener::bind(addr).await?;
   info!("Starting HTTP reverse proxy on port {}", http_port);
 
@@ -373,10 +309,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let io = TokioIo::new(stream);
 
     tokio::task::spawn(async move {
-      if let Err(err) = http1::Builder::new()
-        .serve_connection(io, service_fn(move |req| handle(req, client_ip, false)))
-        .await
-      {
+      if let Err(err) = http1::Builder::new().serve_connection(io, service_fn(move |req| handle(req, client_ip, false))).await {
         warn!("Error serving connection: {:?}", err);
       }
     });

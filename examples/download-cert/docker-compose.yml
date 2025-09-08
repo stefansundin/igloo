@@ -11,7 +11,7 @@ services:
 
       # Download certificate from an S3 bucket. Make sure your S3 bucket is private!
       CERTIFICATE_URL: s3://mybucket/mycert.zip
-      AWS_DEFAULT_REGION: us-west-2
+      AWS_REGION: us-west-2
       AWS_SHARED_CREDENTIALS_FILE: /.aws/credentials
       # To use a custom S3 endpoint:
       # AWS_PROFILE: minio

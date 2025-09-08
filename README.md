@@ -50,7 +50,7 @@ You can configure igloo by setting these environment variables:
 | `SSLKEYLOGFILE`          | Debugging option that allows other programs to decrypt the TLS traffic. | Not set | Not set | Optional |
 | `SSL_CERT_FILE`          | The CA bundle to use. | `/ca-certificates.crt` | Not set | Optional |
 
-You can also set standard AWS environment variables like `AWS_PROFILE`, `AWS_DEFAULT_REGION`, etc.
+You can also set standard AWS environment variables like `AWS_PROFILE`, `AWS_REGION`, `AWS_USE_DUALSTACK_ENDPOINT`, etc.
 
 ## SIGHUP
 
