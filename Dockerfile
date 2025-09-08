@@ -17,7 +17,7 @@ RUN cp /etc/ssl/certs/ca-certificates.crt /dist/
 
 WORKDIR /igloo
 ADD . .
-RUN find
+RUN find | sort
 
 RUN rustup --version
 
