@@ -24,6 +24,7 @@ RUN rustup --version
 RUN case "$TARGETARCH" in \
       arm64) TARGET=aarch64-unknown-linux-musl ;; \
       amd64) TARGET=x86_64-unknown-linux-musl ;; \
+      riscv64) TARGET=riscv64gc-unknown-linux-musl ;; \
       *) echo "Does not support $TARGETARCH" && exit 1 ;; \
     esac && \
     rustup target add $TARGET && \
