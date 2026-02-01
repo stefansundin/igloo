@@ -15,12 +15,16 @@ See the [examples](examples) directory to get started.
 
 The docker image is available on [Docker Hub](https://hub.docker.com/r/stefansundin/igloo) and [Amazon ECR](https://gallery.ecr.aws/stefansundin/igloo).
 
+Docker Hub:
+
 ```
 stefansundin/igloo:v0
 ```
 
+ECR:
+
 ```
-public.ecr.aws/stefansundin/igloo:v0
+ecr-public.aws.com/stefansundin/igloo:v0
 ```
 
 
