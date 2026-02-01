@@ -9,6 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV CC=musl-gcc
 ENV AR=ar
 ENV RUST_BACKTRACE=full
+ENV RUSTFLAGS="-Ctarget-feature=+crt-static"
 
 RUN apt-get update && apt-get install -y musl-tools
 

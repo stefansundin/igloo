@@ -16,7 +16,7 @@ docker buildx build --pull --push --progress plain --platform linux/arm64,linux/
 docker buildx imagetools create -t public.ecr.aws/stefansundin/igloo:beta stefansundin/igloo:beta
 
 # You probably want to change the tag name if you are not me:
-docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64 -t stefansundin/igloo:v0.2.0 .
+docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64,linux/riscv64 -t stefansundin/igloo:v0.2.0 .
 docker buildx imagetools create -t public.ecr.aws/stefansundin/igloo:v0.2.0 stefansundin/igloo:v0.2.0
 
 # If the new version is stable then update tags:
